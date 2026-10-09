@@ -1,4 +1,4 @@
-<!-- version=15, status=converged -->
+<!-- version=16, status=converged -->
 # DS-1 — claude-deal-scout: read-only shopping research plugin (Amazon.in, Flipkart, price history)
 
 Issue: none (new repo; request came from the user in chat)
@@ -122,7 +122,7 @@ Input per candidate: `{ current, lowest:{price,date}, highest:{price,date}, aver
 1. Intake: product, budget, must-haves, brands to avoid, optional `eligible_conditions` (cards/offers the user holds), deadline (for the wait-or-buy verdict). Ask only for what is missing.
 2. Tell the user to log in to the shop sites themselves in Chrome; never ask for credentials.
 3. Read adapters, spawn `claude-deal-scout:deal-scout` with requirement + adapters, in the foreground. The main thread **never drives Chrome itself** (the guard only covers the subagent).
-4. Pass the returned JSON's `candidates` array to `score.js` and `history.js` on the same raw candidate array — both receive the agent's direct output; neither feeds the other. The skill also reads the returned JSON's top-level `gaps` and `blocked` arrays. The skill merges their results before presentation.
+4. Pass the returned JSON's `candidates` array to `score.js` and `history.js` on the same raw candidate array — both receive the agent's direct output; neither feeds the other. **The `requirement` half of `score.js`'s `{ requirement, candidates }` input (§3.5) is supplied by the skill from its own step-1 intake, not by the agent** — the agent's returned JSON carries only `candidates`, `gaps` and `blocked` (§3.4 step 5), so the requirement has no route into the scorers unless the skill passes it alongside. The skill also reads the returned JSON's top-level `gaps` and `blocked` arrays. The skill merges their results before presentation.
 5. Present: best product, best deal, comparison table (must-haves-excluded candidates shown with `must_haves_met: false` and `must_haves_reason` visible so the exclusion reason is legible), vs-your-cart/wishlist/saved, price-history verdict with confidence, flags, gaps, and any blocked-page notices from `blocked` (so the user learns a page was CAPTCHA/interstitial-blocked and its results are incomplete). Links go to allowlisted hosts only. State plainly that nothing was bought or changed.
 
 ### 3.8 Hook wiring (`hooks/hooks.json`)
@@ -239,6 +239,17 @@ depends on). The split is seven genuinely independent deliverables, not one fix 
 None — new repo, no `docs/context/`.
 
 ## Change History
+
+### v16 (implementation validation)
+Raised during Phase 5.5 (implementation-vs-plan validation), not by a cross-review round.
+
+- **§3.7 step 4.** Stated who supplies the `requirement` half of the `{ requirement, candidates }` input
+  that §3.5 pins for `score.js`. The plan pinned the input *shape* but never said where `requirement` came
+  from, while §3.4 step 5 fixes the agent's output at exactly `candidates`, `gaps` and `blocked`. The
+  skill — which collects the requirement at step 1 and is its only holder — must therefore pass it
+  alongside the agent's JSON. Without that sentence the requirement has no route into the scorers, and
+  every requirement-dependent behaviour (the `best_deal` budget gate, the `over_budget` flag, conditional
+  offers, and both deadline-dependent verdict branches) is silently inert rather than failing loudly.
 
 ### v15 (round-14 triage)
 Applied all three findings from the round-14 critique (all JUSTIFIED).
