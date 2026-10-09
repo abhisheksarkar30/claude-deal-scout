@@ -1,0 +1,23 @@
+{
+  "id": "amazon-in",
+  "kind": "shop",
+  "label": "Amazon India",
+  "hosts": ["www.amazon.in", "amazon.in"],
+  "allow": [
+    "^/s$",
+    "^/dp/[A-Z0-9]{10}$",
+    "^/gp/cart/view\\.html$",
+    "^/hz/wishlist/ls(/.*)?$"
+  ],
+  "deny": ["add", "buy", "checkout", "signin", "/ap/", "/gp/css/", "payment", "address", "order"],
+  "urls": {
+    "search": "https://www.amazon.in/s?k={q}",
+    "cart": "https://www.amazon.in/gp/cart/view.html",
+    "wishlist": "https://www.amazon.in/hz/wishlist/ls",
+    "saved": "https://www.amazon.in/gp/cart/view.html"
+  },
+  "notes": [
+    "Saved-for-later renders on the cart page below the cart items, so urls.saved is the cart URL.",
+    "The four allow regexes are the settled v1 set. Widening them is a security decision, not a convenience: every added path is unreviewed attack surface."
+  ]
+}

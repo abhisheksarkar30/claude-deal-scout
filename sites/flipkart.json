@@ -1,0 +1,23 @@
+{
+  "id": "flipkart",
+  "kind": "shop",
+  "label": "Flipkart",
+  "hosts": ["www.flipkart.com", "flipkart.com"],
+  "allow": [
+    "^/search$",
+    "^/[^/]+/p/[a-zA-Z0-9]+$",
+    "^/viewcart$",
+    "^/wishlist$"
+  ],
+  "deny": ["add", "buy", "checkout", "signin", "/ap/", "/gp/css/", "payment", "address", "order"],
+  "urls": {
+    "search": "https://www.flipkart.com/search?q={q}",
+    "cart": "https://www.flipkart.com/viewcart",
+    "wishlist": "https://www.flipkart.com/wishlist",
+    "saved": "https://www.flipkart.com/viewcart"
+  },
+  "notes": [
+    "UNVERIFIED: the cart and wishlist paths (/viewcart, /wishlist) and the saved-for-later location were written from general knowledge, not read off the live site. Confirm them against a logged-in session before the first real run, and correct this file if they differ. The guard fails closed, so a wrong path blocks the read rather than exposing anything.",
+    "Product pages are /<slug>/p/<itemId>; the slug is free-form so the allow regex matches any single path segment before /p/."
+  ]
+}
