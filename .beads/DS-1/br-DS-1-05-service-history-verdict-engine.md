@@ -4,7 +4,7 @@
 
 - **Bead ID**: br-DS-1-05
 - **Priority**: P0 (critical — R10's verdict is the whole point of price history)
-- **Status**: pending
+- **Status**: done
 - **Original Estimate**: 2h
 - **Dependencies**: br-DS-1-01
 - **Blocks**: br-DS-1-06, br-DS-1-07
@@ -103,4 +103,55 @@ wrong order here silently changes buy/wait advice, so it is pinned by fixtures, 
 - `test/history.test.js` (create)
 
 ## Review Notes
+
+Implemented 2026-10-09.
+
+**Outcome Definition verified.** `node --test test/history.test.js` exits 0 — 24 tests, 24 pass. Full
+suite (`npm test`) is 46 pass / 0 fail. Every fixture in the §5.2 list returns its stated verdict.
+
+**Negative control 5.** Mutation: `const MIN_POINTS = 12` → `const MIN_POINTS = 0` (the rule ignored).
+Reverted afterwards; `cmp` confirms `scripts/history.js` is byte-identical to its pre-mutation state.
+Five tests failed, not one:
+
+- `the point-count gate blocks wait on sparse data` ← the "sparse-data test" §5.4 names
+- `a 2-year dataset with only 4 points is low-confidence, not confident`
+- `thin multi-year data is medium confidence when a sale window overlaps`
+- `confidence none does not satisfy the no-dip branch`
+- `every result carries the three verdicts enum, the caveat and both comparisons`
+
+That breadth is expected, not a sign of over-coupling: `MIN_POINTS` feeds *both* the `confident`
+window threshold and the point-count gate, so zeroing it logically flips the confidence tier of every
+thin fixture as well as the gate.
+
+**`MIN_POINTS` ownership — resolved as the bead directed.** Defined and exported by `history.js`.
+**br-DS-1-06 must import it from here and must not redefine it** — two definitions would be two
+sources of truth for one gate. §3.5's prose that lists `MIN_POINTS` "alongside" score.js's
+`PRIOR_MEAN`/`PRIOR_N` is grouping by topic, not a statement of ownership, and should be read that way.
+
+**Fourth invalid-input case, beyond the three §3.6 enumerates.** §3.6 names: no `history` key, a
+missing required summary field, and `points` over 400. A `points` array containing a malformed entry
+(non-numeric price, unparseable date, or a non-object) is a fourth. F14.3's rule — "one uniform outcome
+for all `history`-input validation failures" — makes it omit as well, rather than silently dropping the
+bad point and analysing the rest. Pinned by the `malformed points fail validation rather than being
+silently dropped` test. Recorded because the plan's list of three is not exhaustive.
+
+**Interface.**
+- `analyze(historyValue, { deadline, today, saleCalendar })` → result object, or `null` when the input
+  fails validation (`null` is the caller's "skip this candidate, do not throw" signal).
+- `analyzeAll(candidates, opts)` → array aligned by index with `null` where skipped, so the skill
+  (bead 07) can merge history results onto the raw candidate array without re-deriving indices.
+- `loadSaleCalendar(file)` → `[]` when the file is missing or malformed. `data/sale-calendar.json` does
+  not exist yet (br-DS-1-04 owns it); bead 07 wires the real path.
+- `today` is injectable precisely so no test reads the clock; the real date is used only when the caller
+  omits it. `deadline`/`today` accept `YYYYMMDD` or `YYYY-MM-DD` (the compact form §3.5 already
+  accommodates). An **unparseable `deadline` is treated as absent** — it drops the deadline-dependent
+  branches rather than throwing, so a bad value degrades the advice instead of blocking the report.
+- Output shape (the plan names the fields but never pins the shape):
+  `{ vs_average, vs_lowest, typical_low_window:{label,months}, next_dip_estimate:{month,year,confidence,sale_window,reason}, verdict, reason, caveat }`.
+  `typical_low_window.months` is a list even in the `low_confidence` case (one element) so callers never
+  branch on the shape. `verdict` is drawn from the exported `VERDICTS` enum; `confidence` from
+  `CONFIDENCES` — both exported so bead 06/07 can validate against them instead of hardcoding strings.
+
+**Not covered, by design (§5.3).** Real-world forecast accuracy. These tests pin behaviour on synthetic
+series; they say nothing about whether the dip estimate is *right*, and should not be read as doing so.
 
