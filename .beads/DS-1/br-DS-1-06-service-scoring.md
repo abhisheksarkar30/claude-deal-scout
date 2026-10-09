@@ -4,7 +4,7 @@
 
 - **Bead ID**: br-DS-1-06
 - **Priority**: P0 (critical — the ranking and the report-safety validation)
-- **Status**: pending
+- **Status**: done
 - **Original Estimate**: 2-3h
 - **Dependencies**: br-DS-1-02, br-DS-1-05
 - **Blocks**: br-DS-1-07
@@ -123,4 +123,83 @@ security property, not just hygiene.
 - `test/score.test.js` (create)
 
 ## Review Notes
+
+Implemented 2026-10-09.
+
+**Outcome Definition verified.** `node --test test/score.test.js` exits 0 — 31 tests, 31 pass. Full
+suite (`npm test`) is 77 pass / 0 fail.
+
+**Negative controls 4 and 8.** Each mutated once, reverted, `cmp` confirms `scripts/score.js` is
+byte-identical to its pre-mutation state afterwards. Each flipped exactly one test:
+
+| Control | Mutation | Test that failed |
+|---|---|---|
+| 4 | `if (!checkUrl(candidate.url, adapters).ok) {` → `if (false) {` | `an off-allowlist url is dropped but the candidate is kept` |
+| 8 | `if (candidate.must_haves_met === true && 'must_haves_reason' in candidate) {` → `if (false) {` | `a spurious must_haves_reason is stripped when must_haves_met is true` |
+
+### The canonical candidate allowlist (the plan gap, closed here)
+
+`scripts/score.js` exports `CANDIDATE_FIELDS`. Anything the agent emits outside this list is dropped:
+
+| Field | Type | Notes |
+|---|---|---|
+| `title` | string | PII-sanitized, capped |
+| `url` | string | re-checked by `checkUrl`; **nulled** on failure |
+| `source` | string | e.g. `"amazon-in"`, `"amazon-in/cart"` |
+| `product_key` | string | drives cross-site grouping |
+| `price` | number | required — a candidate without a valid one is dropped entirely |
+| `mrp` | number | feeds `inflated_mrp` |
+| `rating` | number | feeds `rating_adj` |
+| `review_count` | number | `n` in the shrinkage formula; feeds `low_reviews` |
+| `third_party_seller` | boolean | **agent-supplied** — see below |
+| `offers` | array | `{ kind: 'bank'\|'coupon'\|'exchange', amount, condition? }` |
+| `history` | object | passed through; validated, never sanitized |
+| `must_haves_met` | boolean | agent-supplied gate |
+| `must_haves_reason` | string | stripped when `must_haves_met` is `true` |
+
+**br-DS-1-07 must emit exactly these fields and nothing else.**
+
+### Under-specifications resolved here — recorded, not invented silently
+
+The plan names these flags, bounds and shapes without defining them. Each default below is a
+judgement call made in this bead; none is contradicted by the plan, but none is stated by it either:
+
+- **`low_reviews` had no threshold.** Added exported knob `MIN_REVIEWS = 10`.
+- **`over_budget` had no derivation.** Defined as `effective_price > requirement.budget` (effective,
+  not list, price — that is what the user actually pays).
+- **`third_party_seller` had no derivation, and `score.js` cannot derive it** — it depends on reading
+  the page, like `must_haves_met`. Taken as an agent-supplied boolean and surfaced as a flag. If the
+  agent never sets it the flag never fires, which is the honest failure mode.
+- **"numbers finite and bounded" had no bound.** Added `MAX_NUMBER = 10_000_000`.
+- **"strings length-capped" had no cap.** Added `MAX_STRING_LENGTH = 300`.
+- **`PRIOR_MEAN` / `PRIOR_N` had no values.** Set to `4.0` and `20`. The plan calls these "tunable
+  knobs", so a default is expected, but the numbers are this bead's choice and should be tuned against
+  real ratings.
+- **The offer object shape was never specified.** Defined as `{ kind, amount, condition? }` with
+  `kind` from the exported `OFFER_KINDS`.
+
+### Other decisions worth knowing
+
+- **URL failure nulls the link, it does not drop the candidate.** §3.5 says "an off-allowlist link in
+  the report is dropped" — ambiguous between dropping the link and dropping the candidate. Read as the
+  link: the candidate's data came from an allowlisted page, so it stays in the ranking and in the
+  comparison table, but it carries no clickable URL. The phishing-smuggling control is satisfied
+  either way; the difference is only whether a legitimate product disappears. Pinned by a test.
+- **The PII sanitizer runs over `title`, `source` and `product_key`** — every string field in the
+  allowlist except `url`, which §3.5's own "not part of a URL" clause excludes (a URL path can contain
+  an 8-digit product id that is not PII), and `history`, which the plan excludes explicitly.
+- **The compact-date exclusion is a validity check, not a length check.** `20260515` survives because
+  it parses as a real YYYYMMDD; `20261315` (month 13) is still redacted. A naive "8 digits is a date"
+  rule would have been a hole.
+- **Observation 4 resolved: one gate helper, `passesMustHaves`, testing `=== true`.** Fail-closed on an
+  absent field, since §3.4 step 3 mandates the field and its absence is a contract violation. Both
+  `best_product` and `best_deal` call this one function, so §3.5's asymmetric wording ("`false` is
+  excluded" vs "`true`") cannot drift into two behaviours.
+- **Signature:** `score({ requirement, candidates }, adapters)`. Adapters are passed in rather than
+  loaded here so the caller loads once via `policy.loadSites` and reuses them.
+- **`product_groups` lists only keys with more than one member** — a group of one is not a comparison.
+- **The report echoes `requirement: { budget, eligible_conditions }`** back, so a rendered report is
+  self-describing about which offers were eligible.
+- `MIN_POINTS` is **not** defined here; `history.js` owns it, and a test asserts its absence from this
+  module's exports so the ownership cannot silently drift back.
 
