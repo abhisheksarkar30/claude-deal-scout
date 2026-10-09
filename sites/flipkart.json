@@ -17,7 +17,7 @@
     "saved": "https://www.flipkart.com/viewcart"
   },
   "notes": [
-    "UNVERIFIED: the cart and wishlist paths (/viewcart, /wishlist) and the saved-for-later location were written from general knowledge, not read off the live site. Confirm them against a logged-in session before the first real run, and correct this file if they differ. The guard fails closed, so a wrong path blocks the read rather than exposing anything.",
+    "VERIFIED 2026-10-09 against a logged-in session: /viewcart loads the cart (the header Cart link adds ?exploreMode=true&preference=FLIPKART, which the path-only allow regex ignores) and /wishlist is the header's own My Wishlist link target. STILL UNVERIFIED: where saved-for-later lives, because the test cart was empty; `saved` points at /viewcart as a guess. The cart page also rendered no text to read_page/get_page_text for several seconds (client-rendered), so extraction there is unproven.",
     "Product pages are /<slug>/p/<itemId>; the slug is free-form so the allow regex matches any single path segment before /p/."
   ]
 }

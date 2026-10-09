@@ -134,4 +134,9 @@ H5 — PARTIAL FAIL. navigate uses `url` (PASS). tabs_create_mcp has NO paramete
   Fixed in 0.1.1: tabs_create_mcp removed from URL_BEARING_TOOLS; navigate still fails closed.
 
 Hooks fire for the subagent: confirmed (the block above came from guard.js via the plugin hook).
-NOT confirmed: that hooks do NOT fire for ordinary Chrome use (R3); Flipkart /viewcart and /wishlist.
+Flipkart paths (logged-in session, 2026-10-09): /viewcart PASS (title "Shopping Cart", page showed
+  "Your cart is empty"); /wishlist PASS (the header's My Wishlist link href is exactly /wishlist).
+  Saved-for-later location NOT confirmed (empty cart). The cart page exposed no text to
+  get_page_text / read_page even after 3s (client-rendered; only a screenshot showed content), so
+  real extraction there is a risk for the agent.
+NOT confirmed: that hooks do NOT fire for ordinary Chrome use (R3).
