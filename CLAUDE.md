@@ -2,8 +2,17 @@
 
 Claude Code plugin for read-only shopping research (Amazon.in, Flipkart, price history).
 
-**Resuming work?** Read the converged plan `docs/planning/DS-1-deal-scout-plugin.md` (v15, `status=converged`),
-then the approved beads in `.beads/DS-1/`.
+**Resuming work?** Read the converged plan `docs/planning/DS-1-deal-scout-plugin.md` (v17, `status=converged`),
+then the approved beads in `.beads/DS-1/`. (The beads still cite plan v15 with v15 line numbers —
+historical work orders, left as written.)
+
+## Context docs
+
+`docs/context/INDEX.md` is the map to this codebase for an agent starting cold: architecture, the
+interface/data contracts, workflows, conventions, and the security model, each cited to the file and
+symbol that proves it. Read the index first, then only the module(s) covering the area you are about
+to change. The design source of truth is still the plan above — the context docs describe what the
+code does today, and say so when the two differ.
 
 ## Conventions
 

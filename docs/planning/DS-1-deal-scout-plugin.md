@@ -1,8 +1,8 @@
-<!-- version=16, status=converged -->
+<!-- version=17, status=converged -->
 # DS-1 — claude-deal-scout: read-only shopping research plugin (Amazon.in, Flipkart, price history)
 
 Issue: none (new repo; request came from the user in chat)
-Branch: `feat/ds-1-deal-scout-plugin` (off `main`). No git remote exists yet — "push" steps are skipped until the user adds one.
+Branch: `feat/ds-1-deal-scout-plugin` (off `main`), pushed to `origin` (`github.com/abhisheksarkar30/claude-deal-scout`).
 Beads: `.beads/DS-1/` (filled in at Phase 3)
 
 ## 1. Problem
@@ -127,7 +127,12 @@ Input per candidate: `{ current, lowest:{price,date}, highest:{price,date}, aver
 
 ### 3.8 Hook wiring (`hooks/hooks.json`)
 `PreToolUse` matcher `mcp__(claude-in-chrome|Claude_Browser)__.*` → `node "${CLAUDE_PLUGIN_ROOT}/scripts/guard.js" pre`;
-`PostToolUse` matcher `mcp__(claude-in-chrome|Claude_Browser)__navigate` → `… post`.
+`PostToolUse` matcher `mcp__(claude-in-chrome|Claude_Browser)__(navigate|tabs_context_mcp)` → `… post`.
+
+The `PostToolUse` matcher covers `tabs_context_mcp` as well as `navigate` because H2 was
+live-checked and **failed**: `navigate`'s response echoes only the *requested* URL, so a post hook
+on `navigate` alone sees nothing (R2, `.beads/DS-1/evidence-03.txt`). The real landing URL appears
+in a `tabs_context_mcp` listing, so the redirect check needs that tool too.
 
 ## 4. Change list
 
@@ -197,7 +202,7 @@ Expected margin: controls 1–5 and 8 flip from pass to fail; the two `loadSites
 - **R9 — Hook matcher misses native-named tools.** If Claude in Chrome exposes any tool (e.g. `computer`, `form_input`) under a non-MCP-prefixed name, the `PreToolUse` matcher `mcp__(claude-in-chrome|Claude_Browser)__.*` never fires for it and the guard never runs — a silent gap, not a fail-open the guard can catch. Mitigation: bead 03 enumerates every tool name Claude in Chrome exposes and widens the hook matcher (or adds a second hook entry) for any that fall outside the MCP namespace. Until bead 03 is complete, the `tools:` allowlist (hypothesis H1) is the only layer covering this subset.
 
 ## 7. Pre-flight (needs a decision before bead 01)
-- **Git remote.** None exists. Plan assumes local-only commits on the feature branch; tell me if you want a GitHub repo created (outward-facing, so not done unprompted).
+- **Git remote.** Resolved: `origin` → `https://github.com/abhisheksarkar30/claude-deal-scout.git`; the feature branch pushes to it and the header line above was corrected in v17.
 - **License.** Defaulting to MIT.
 - **Live-browser checks.** Beads 03 and 06 want to observe `navigate`'s response shape and the `tools:` allowlist behaviour in your real Chrome. I will ask before touching it. Beads 04 and 05 only read public history sites or run offline scripts. Bead 04 only reads public history sites in the built-in browser pane.
 
@@ -236,9 +241,36 @@ depends on). The split is seven genuinely independent deliverables, not one fix 
 **Security engineer.** New trust surfaces: (1) the user's authenticated shopping sessions, read-only via a path allowlist; (2) third-party history sites, unauthenticated, tight allowlist, public data out only; (3) attacker-controlled page text feeding the model and the report, handled by schema validation and URL re-checks. No credentials are ever typed or stored; the plugin opens no sockets itself. Residual risks (fail-open on crash/missing node, redirect check depends on response shape, main-thread browsing unguarded) are listed in R1–R3 and will be restated in `docs/SECURITY.md`.
 
 ## 11. Context docs to refresh (running list)
-None — new repo, no `docs/context/`.
+`docs/context/` now exists — the AI-facing doc set (index + architecture, conventions,
+build-and-run, glossary, security-and-permissions, site-adapters, data-model, api-surface,
+workflows, testing-and-quality). It describes what the code does **today**; this plan remains the
+design source of truth. Any change to a documented entity, endpoint, permission, flow, module or
+convention must be reflected there in the same change.
+
+Running list of known divergences between this plan and the code:
+
+- §3.8's `PostToolUse` matcher was written before H2 failed; corrected in v17 to include
+  `tabs_context_mcp`.
+- §7's "no git remote" pre-flight note was written before the remote existed; corrected in v17.
+- The eight bead files under `.beads/DS-1/` still cite this plan as **v15** with v15 line numbers.
+  They are historical work orders and were deliberately **not** rewritten: renumbering their
+  citations without re-deriving every line number would replace one stale claim with another.
 
 ## Change History
+
+### v17 (documentation accuracy pass)
+No design change. Three stale claims found while generating `docs/context/` were corrected, and
+§11's running list was filled in.
+
+- **§3.8.** The `PostToolUse` matcher still read `…__navigate`; `hooks/hooks.json` has matched
+  `(navigate|tabs_context_mcp)` since H2 was live-checked and failed (commit `ec1b7eb`). Corrected,
+  with the reason stated inline.
+- **§7 and the header block.** Both said no git remote exists — the header line "push steps are
+  skipped until the user adds one" and the §7 pre-flight bullet. `origin` is configured and the
+  feature branch pushes to it.
+- **§11.** Recorded that `docs/context/` now exists and is maintained alongside the code, plus the
+  known divergences (the two above, and the beads' v15 citations).
+- **CLAUDE.md** now cites v17 rather than v15.
 
 ### v16 (implementation validation)
 Raised during Phase 5.5 (implementation-vs-plan validation), not by a cross-review round.
