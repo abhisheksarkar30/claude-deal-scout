@@ -2,7 +2,8 @@
 evidence-04.txt — br-DS-1-04: H3 site survey, and the sale calendar
 ================================================================================
 
-STATUS: **H3 SURVEY DEFERRED — NOT YET RUN. No history adapter ships yet.**
+STATUS: **H3 SURVEY PARTIALLY RUN 2026-10-09 (second session) — see "Survey results" at the
+end. Still no history adapter ships: the one site with good data has no URL-addressable lookup.**
 
 On 2026-10-09 the human chose to defer every live-browser verification in this
 plan (beads 03, 04, 07) to one later sitting. The survey described below is a
@@ -91,4 +92,59 @@ These are "typical" windows, not announced dates — `history.js` labels them th
 way in its output, and confidence in the next-dip estimate depends on whether one
 of them overlaps the predicted low month. The file is data precisely so a wrong
 or moved window is corrected by editing JSON, with no code change (R8).
+
+--------------------------------------------------------------------------------
+Survey results — 2026-10-09, built-in browser pane, public pages, no login, no clicks
+--------------------------------------------------------------------------------
+Judged with the agent's own tools (read_page / get_page_text), not page-script inspection.
+Form/robots/sitemap checks used one-off page-script reads for the survey only.
+
+pricehistoryapp.com  — DATA: PASS. LOOKUP: FAIL.
+  Coverage: Amazon India, Flipkart (and Myntra, Croma, Vijaysales cross-store prices).
+  Product page shape: /product/<site-internal-slug>  (e.g. .../product/samsung-galaxy-s25-ultra-...)
+  read_page on a product page exposes, as plain text, ALL FOUR values:
+    current        "Current: ₹84,999"
+    lowest         "All-time Low ₹84,744"  (also "All-time low: ... ₹84,744")
+    highest        "All-time high ... ₹1,29,999"
+    average        "30d Average ₹95,588"   <-- a 30-DAY average, not all-time. Different
+                   meaning from `average` in §3.6 history.js; must be labelled or mapped.
+  Per-point history: NOT exposed. The chart yields axis labels only (₹85k.., 25 Aug, 21 Sept,
+  7 Oct, 9 Oct) -> `points` stays absent; summary-stats path only (low confidence by design).
+  History length is shown ("598 days of history", "Last checked 9 Oct 2026").
+  get_page_text alone returned only an <article> fragment (one line); read_page is required.
+  Third-party verdicts on the page ("Deal Score 96%", "Buy signal", "Good time to buy?") are
+  untrusted site opinions and MUST NOT be passed through as our verdict.
+  LOOKUP: the "paste a product link" form is client-side JS (form has no action, unnamed input).
+    /search?q=...        -> 404
+    /?url=<amazon url>   -> just the homepage
+    sitemap (100 URLs)   -> no ASIN in any URL
+  So a product page cannot be addressed from an amazon.in / flipkart URL or a title. The slug is
+  site-internal. Reaching a product would mean typing into the form (forbidden) or walking the
+  site's category / deals listing pages and matching by title (brittle; covers only products the
+  site already lists). robots.txt: Disallow /api/, /sign-in, /sign-up, /forgot-password,
+  /delete-account only; product pages are permitted.
+
+pricebefore.com (www.)  — EXCLUDED.
+  Has a GET search at /search/?q=<text> (category + q), which WOULD give an addressable lookup,
+  but its robots.txt says "User-agent: * Disallow: /search/" (also /api/, /redirect/,
+  /category/filters/, /product/update/). Using /search/ would ignore the site's stated policy, so
+  it is not used (R7: respect bot signals). Product-page contents were not examined.
+
+NOT SURVEYED this session: pricee.com (home page is a generic comparison page, no history
+  evidence seen), buyhatke.com (JS marketing page; no lookup URL found on home), smartprix.com,
+  keepa.com. Unknown, not rejected.
+
+DECISION (this session): ship NO history adapter. Reason: the only site whose data passes the
+four-value rule cannot be reached from a product URL or title without typing, and the only
+addressable search found is disallowed by its robots.txt. Writing a template like
+https://pricehistoryapp.com/product/{slug} would be inventing a URL the agent cannot construct.
+
+OPEN QUESTION FOR THE HUMAN (changes the design, so not decided here):
+  (a) Accept pricehistoryapp.com via listing-page discovery (agent navigates /deals/store/<shop>
+      or a category page and `find`s the product by title) -- partial coverage, new §3.3 field
+      for a "browse" lookup, plan change needed; or
+  (b) Survey the remaining candidates (smartprix, buyhatke, pricee, keepa) for a robots-permitted
+      addressable lookup first; or
+  (c) Leave R10 inert and ship; the pipeline already degrades to `no_signal` with a gap note.
+  Also decide how `average` maps: pricehistoryapp's is a 30-day average.
 ================================================================================
