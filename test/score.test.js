@@ -236,6 +236,16 @@ test('best_deal respects the budget', () => {
   assert.ok(found(rep, 'amazon-in').flags.includes('over_budget'));
 });
 
+test('over_budget falls on the rounded effective_price, so it agrees with the best_deal budget gate', () => {
+  // 100.004 rounds to an effective_price of exactly 100. With budget 100 the candidate is within
+  // budget for best_deal, so the flag must not disagree (it previously read the unrounded value).
+  const rep = report([candidate({ price: 100.004 })], { budget: 100 });
+  const only = found(rep, 'amazon-in');
+  assert.equal(only.effective_price, 100);
+  assert.ok(!only.flags.includes('over_budget'));
+  assert.equal(rep.best_deal.source, 'amazon-in');
+});
+
 // ---------------------------------------------------------------------------
 // must_haves_reason invariant
 // ---------------------------------------------------------------------------

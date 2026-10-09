@@ -47,10 +47,11 @@ results only — then continue.
 
 ## 3. Run the research agent
 
-Read the site adapters:
+Read the site adapters (the two paths are passed as arguments, not inlined into the `-e` string, so a
+Windows plugin-root backslash is not eaten as an escape sequence):
 
 ```bash
-node -e "console.log(JSON.stringify(require('${CLAUDE_PLUGIN_ROOT}/scripts/policy').loadSites('${CLAUDE_PLUGIN_ROOT}/sites')))"
+node -e "console.log(JSON.stringify(require(process.argv[1]).loadSites(process.argv[2])))" "${CLAUDE_PLUGIN_ROOT}/scripts/policy" "${CLAUDE_PLUGIN_ROOT}/sites"
 ```
 
 Spawn the `claude-deal-scout:deal-scout` subagent **in the foreground**, passing it the requirement and
@@ -62,11 +63,18 @@ enforcement layer there is. If the agent fails, report the failure — do not ta
 
 ## 4. Score it
 
-Write the agent's returned JSON to a file, then:
+Write the agent's returned JSON to a file, then pass the requirement you collected in step 1 to
+`report.js` alongside it:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/report.js" < agent-output.json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/report.js" --requirement '<requirement-json>' < agent-output.json
 ```
+
+`<requirement-json>` is the step-1 requirement as one JSON object — for example
+`'{"budget":50000,"eligible_conditions":["hdfc-credit-card"],"deadline":"2026-11-30"}'` — with any key
+the user did not supply left out; if the user supplied none of them, omit the flag. **The agent's JSON
+carries only `candidates`, `gaps` and `blocked`, so the requirement is not in it**; without this flag the
+budget gate, the `over_budget` flag and both deadline-dependent verdict branches never fire.
 
 That one command validates and ranks the candidates (`score.js`), runs the price-history verdict over the
 same raw candidate array (`history.js`), and prints the merged report. Both receive the agent's direct

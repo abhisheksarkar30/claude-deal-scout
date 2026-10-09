@@ -4,8 +4,10 @@
 /**
  * The skill's single deterministic entry point.
  *
- * Reads the research agent's JSON on stdin, validates and scores it with `score.js`, runs `history.js`
- * over the same raw candidate array, and prints one merged report on stdout.
+ * Reads the research agent's JSON on stdin, takes the skill's requirement (budget / eligible
+ * conditions / deadline) as `--requirement <json>`, validates and scores the candidates with
+ * `score.js`, runs `history.js` over the same raw candidate array, and prints one merged report on
+ * stdout.
  *
  * It exists so the skill invokes one command instead of pasting Node into a prompt, and so the whole
  * pipeline — validate, rank, history, merge — is testable end to end without a browser.
@@ -24,6 +26,10 @@ const ROOT = path.join(__dirname, '..');
  * Both `score.js` and `history.js` receive the agent's raw candidates directly — neither feeds the
  * other (§3.7 step 4). They are joined here, on `candidate.index`, because validation may drop
  * candidates and so the two output arrays are not positionally aligned.
+ *
+ * `input.requirement` is NOT part of the agent's JSON (the agent emits exactly `candidates`, `gaps`
+ * and `blocked` — §3.4 step 5). The skill, which collected it at intake (§3.7 step 1), supplies it
+ * separately and `main()` merges it into `input` before this call.
  */
 function buildReport(input, adapters, saleCalendar) {
   const candidates = Array.isArray(input && input.candidates) ? input.candidates : [];
@@ -43,6 +49,24 @@ function buildReport(input, adapters, saleCalendar) {
   };
 }
 
+/**
+ * The requirement (budget, `eligible_conditions`, deadline) as a `--requirement <json>` argument.
+ *
+ * Without it, `requirement` is `{}` — and silently so: `budget`/`eligible_conditions`/`deadline` are
+ * all absent, so the `over_budget` flag and `best_deal`'s budget gate never fire and both
+ * deadline-dependent verdict branches are omitted. That is why the skill must pass it (§3.7 step 4)
+ * and why a malformed value fails loudly rather than defaulting to `{}`.
+ *
+ * @returns {object|undefined} the parsed requirement, or undefined when the flag is absent
+ */
+function requirementFromArgv(argv) {
+  const flag = argv.indexOf('--requirement');
+  if (flag === -1) return undefined;
+  const raw = argv[flag + 1];
+  if (raw === undefined) throw new Error('--requirement needs a JSON argument');
+  return JSON.parse(raw);
+}
+
 function main() {
   let input;
   try {
@@ -53,9 +77,11 @@ function main() {
   }
 
   try {
+    const requirement = requirementFromArgv(process.argv.slice(2));
+    const merged = requirement === undefined ? input : { ...input, requirement };
     const adapters = loadSites(path.join(ROOT, 'sites'));
     const saleCalendar = loadSaleCalendar(path.join(ROOT, 'data', 'sale-calendar.json'));
-    process.stdout.write(`${JSON.stringify(buildReport(input, adapters, saleCalendar), null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify(buildReport(merged, adapters, saleCalendar), null, 2)}\n`);
     return 0;
   } catch (err) {
     process.stderr.write(`deal-scout report: ${err.message}\n`);

@@ -99,20 +99,77 @@ test('history stays aligned when validation drops a candidate in between', () =>
   assert.equal(report.candidates.find((c) => c.source === 'amazon-in').price_history, null);
 });
 
-test('the report CLI reads the agent JSON on stdin and writes the report on stdout', () => {
+test('the report CLI reads the agent JSON on stdin and takes the requirement via --requirement', () => {
+  // Agent-shaped payload: exactly the three top-level keys §3.4 step 5 mandates — no `requirement`.
   const input = JSON.stringify({
-    requirement: { budget: 25000 },
     candidates: [candidate({ price: 1000 })],
     gaps: [],
     blocked: [],
   });
 
-  const result = spawnSync(process.execPath, [REPORT], { input, encoding: 'utf8' });
+  const result = spawnSync(process.execPath, [REPORT, '--requirement', JSON.stringify({ budget: 25000 })], {
+    input,
+    encoding: 'utf8',
+  });
   assert.equal(result.status, 0, result.stderr);
 
   const parsed = JSON.parse(result.stdout);
   assert.equal(parsed.best_deal.source, 'amazon-in');
   assert.deepEqual(parsed.blocked, []);
+});
+
+test('the requirement reaches score.js and history.js through --requirement', () => {
+  const agentOutput = {
+    candidates: [
+      candidate({ source: 'amazon-in', price: 20000 }),
+      candidate({
+        source: 'flipkart',
+        url: 'https://www.flipkart.com/apple-iphone-15-blue-128-gb/p/itm1234abcd',
+        price: 30000,
+        history: {
+          current: 1060,
+          lowest: { price: 1000, date: '20241215' },
+          highest: { price: 2200, date: '20240615' },
+          average: 1800,
+          points: DECEMBER_POINTS,
+        },
+      }),
+    ],
+    gaps: [],
+    blocked: [],
+  };
+  const requirement = { budget: 5000, deadline: '2026-06-30' };
+
+  // Control: with no --requirement the agent's JSON carries none, so `requirement` is {} and no
+  // requirement-driven behaviour fires — the silent gap this flag closes.
+  const without = spawnSync(process.execPath, [REPORT], { input: JSON.stringify(agentOutput), encoding: 'utf8' });
+  assert.equal(without.status, 0, without.stderr);
+  const withoutReport = JSON.parse(without.stdout);
+  assert.equal(withoutReport.requirement.budget, null);
+  assert.deepEqual(
+    withoutReport.candidates.map((c) => c.flags.includes('over_budget')),
+    [false, false],
+  );
+  assert.equal(withoutReport.candidates[1].price_history.verdict, 'no_signal');
+
+  // With --requirement: the budget reaches score.js (flag + gate) and the deadline reaches history.js.
+  const withReq = spawnSync(
+    process.execPath,
+    [REPORT, '--requirement', JSON.stringify(requirement)],
+    { input: JSON.stringify(agentOutput), encoding: 'utf8' },
+  );
+  assert.equal(withReq.status, 0, withReq.stderr);
+  const report = JSON.parse(withReq.stdout);
+  assert.equal(report.requirement.budget, 5000);
+  assert.deepEqual(
+    report.candidates.map((c) => c.flags.includes('over_budget')),
+    [true, true],
+  );
+  assert.equal(report.best_deal, null); // both candidates are over budget
+  assert.equal(report.best_deal_message, 'no qualifying deal found');
+  // Same history as the control: the deadline alone flipped the verdict from no_signal to buy_now.
+  assert.equal(report.candidates[1].price_history.verdict, 'buy_now');
+  assert.match(report.candidates[1].price_history.reason, /after your deadline/);
 });
 
 test('the report CLI fails loudly on malformed input rather than printing a partial report', () => {

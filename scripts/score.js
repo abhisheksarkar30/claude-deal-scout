@@ -171,8 +171,9 @@ function validateCandidate(raw, adapters) {
       }
       candidate[field] = value;
     } else if (field === 'offers') {
-      candidate.offers = validOffers(value) ? value.map((o) => ({ ...o })) : [];
-      if (!validOffers(value)) dropped.push(field);
+      const offersOk = validOffers(value);
+      candidate.offers = offersOk ? value.map((o) => ({ ...o })) : [];
+      if (!offersOk) dropped.push(field);
     } else if (field === 'history') {
       if (validHistory(value)) candidate.history = value;
       else dropped.push(field);
@@ -303,6 +304,10 @@ function score(input, adapters) {
     if (!validated) continue;
 
     const { effectivePrice, implausible } = applyOffers(validated.price, validated.offers, eligibleConditions);
+    // The `over_budget` flag reads this same rounded value — the one the report exposes and the
+    // `best_deal` budget gate compares against — so a price within a rounding step of the budget
+    // cannot be flagged over budget yet still qualify as the best deal.
+    const effective_price = Math.round(effectivePrice * 100) / 100;
     const ratingAdj = adjustedRating(validated);
     const dropped = validated._dropped;
     delete validated._dropped;
@@ -310,9 +315,9 @@ function score(input, adapters) {
     valid.push({
       ...validated,
       index,
-      effective_price: Math.round(effectivePrice * 100) / 100,
+      effective_price,
       rating_adj: Math.round(ratingAdj * 1000) / 1000,
-      flags: flagsFor({ candidate: validated, effectivePrice, ratingAdj, budget, offerImplausible: implausible }),
+      flags: flagsFor({ candidate: validated, effectivePrice: effective_price, ratingAdj, budget, offerImplausible: implausible }),
       dropped_fields: dropped,
     });
   }
