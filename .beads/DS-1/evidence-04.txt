@@ -1,0 +1,94 @@
+================================================================================
+evidence-04.txt — br-DS-1-04: H3 site survey, and the sale calendar
+================================================================================
+
+STATUS: **H3 SURVEY DEFERRED — NOT YET RUN. No history adapter ships yet.**
+
+On 2026-10-09 the human chose to defer every live-browser verification in this
+plan (beads 03, 04, 07) to one later sitting. The survey described below is a
+browser task — the plan says to do it in the built-in browser pane on public
+pages, never in the user's real Chrome, but it is still live network work and it
+was deferred with the rest.
+
+What DID ship in this bead: `data/sale-calendar.json`, which needs no browser.
+
+CONSEQUENCE, stated plainly rather than left implicit:
+  With no `sites/<history-site>.json` on disk, price history (R10) is INERT.
+  `loadSites` returns the two shop adapters and no history adapter; §3.4 step 4
+  finds no applicable adapter for any candidate, omits the `history` key and adds
+  a "no price history found" gap note; §3.6 takes the summary-stats path and
+  returns `no_signal` for everything. The pipeline degrades correctly and the
+  report says so — it does not invent a pattern — but the buy/wait verdict, which
+  is the point of R10, produces nothing until the survey is done.
+
+--------------------------------------------------------------------------------
+H3 — which public price-history sites cover amazon.in and flipkart, and what do
+     their pages expose WITHOUT a click?
+--------------------------------------------------------------------------------
+Why it matters: the agent cannot click (R4; §4.2 forbids a click-based
+workaround). If a site renders its chart to a canvas and exposes no text, it is
+useless to us no matter how good its data is. This is the highest-risk unverified
+fact in the plan.
+
+Procedure (built-in browser pane, public pages only, no login, no account data)
+  Candidate sites to try, at minimum:
+    - pricehistoryapp.com
+    - buyhatke.com            (India-focused)
+    - pricee.com
+    - smartprix.com           (India-focused)
+    - keepa.com               (may require login for anything useful)
+
+  For each site, for a real amazon.in product URL and a real flipkart product URL:
+  1. Navigate to the site's lookup for that product.
+  2. WITHOUT clicking anything, read the page text.
+  3. Record: site id, the exact lookup URL shape, whether it covers `amazon-in`,
+     whether it covers `flipkart`, and which of these four values the page text
+     actually yields: `current`, `lowest`, `highest`, `average`. Also note
+     whether per-point history is exposed (feeds `points`, which is optional).
+
+Decision rule (§3.4 step 4)
+  - A site is USABLE for a shop only if the page text yields ALL FOUR of
+    `current`, `lowest`, `highest`, `average`. A partial result counts as no data.
+  - If no site is usable for a shop: ship NO history adapter for it. That is a
+    valid outcome, not a failure — record it here and let the pipeline degrade.
+  - Do NOT build a click-based or JS-injection workaround. §4.2 forbids it.
+
+Then author `sites/<history-site>.json`, one file per verified site, as a
+`kind: "history"` adapter:
+  - real `hosts`, `label`, `notes`;
+  - `urls.lookup` built from the product's canonical, query-stripped URL or
+    title — NEVER anything from the user's account (R5; §3.4 step 6);
+  - a TIGHT `allow` list covering product/lookup paths only. `loadSites` will
+    reject the adapter if any allow-regex would also permit a path from the shop
+    deny vocabulary (`add`, `buy`, `checkout`, `signin`, `/ap/`, `/gp/css/`,
+    `payment`, `address`, `order`) — that check exists precisely to stop a
+    history site being able to reach `/buy/confirm` or `/payment/result`;
+  - `covers`: non-empty array of the shop-adapter ids it supports
+    (`"amazon-in"`, `"flipkart"`). A `covers` id that is not a loaded shop
+    adapter is rejected at load.
+
+Verify: `node --test test/adapter.test.js` must still pass — its shipped-adapter
+assertions cover any new file automatically, and the `covers`-id and
+adversarial-path checks run on it. No new test file is needed for this bead.
+
+Record in this file: site id, coverage, exact URL shape, exposed text, and the
+ship/ship-none decision with its reason.
+
+--------------------------------------------------------------------------------
+data/sale-calendar.json — SHIPPED
+--------------------------------------------------------------------------------
+Authored 2026-10-09. Eight approximate Indian sale windows (Republic Day, Holi,
+Summer, Prime Day, Independence Day, Great Indian Festival / Big Billion Days,
+Diwali / Dhanteras, Year End), each with the months it spans and a note saying it
+is approximate and shifts year to year.
+
+Format is the array `history.js` `loadSaleCalendar` consumes: entries of
+`{ name, months: number[] }`, where `months` is 1-12. Extra keys (`note`) are
+ignored by the overlap test, which is `saleCalendar.find(w =>
+w.months.includes(dipMonth))`.
+
+These are "typical" windows, not announced dates — `history.js` labels them that
+way in its output, and confidence in the next-dip estimate depends on whether one
+of them overlaps the predicted low month. The file is data precisely so a wrong
+or moved window is corrected by editing JSON, with no code change (R8).
+================================================================================

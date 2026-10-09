@@ -1,0 +1,42 @@
+[
+  {
+    "name": "Republic Day Sale",
+    "months": [1],
+    "note": "Amazon and Flipkart both run a late-January sale; the exact window shifts year to year."
+  },
+  {
+    "name": "Holi Sale",
+    "months": [3],
+    "note": "Approximate. Some years this runs in early March, some in late February — February is not listed because the sale usually lands after the month turns."
+  },
+  {
+    "name": "Summer Sale",
+    "months": [4, 5],
+    "note": "Approximate. Amazon's Summer Sale and Flipkart's equivalent span late April into May."
+  },
+  {
+    "name": "Prime Day",
+    "months": [7],
+    "note": "Amazon only — Flipkart has no direct equivalent. Usually mid-July."
+  },
+  {
+    "name": "Independence Day Sale",
+    "months": [8],
+    "note": "Approximate. Around 15 August."
+  },
+  {
+    "name": "Great Indian Festival / Big Billion Days",
+    "months": [9, 10],
+    "note": "The biggest window of the year. Amazon calls it the Great Indian Festival, Flipkart the Big Billion Days; they usually overlap and can start in late September."
+  },
+  {
+    "name": "Diwali / Dhanteras Sale",
+    "months": [10, 11],
+    "note": "Approximate, and it moves with the lunar calendar — in some years it falls entirely in October and overlaps the Great Indian Festival window."
+  },
+  {
+    "name": "Year End Sale",
+    "months": [12],
+    "note": "Approximate. Late December, before the new year."
+  }
+]

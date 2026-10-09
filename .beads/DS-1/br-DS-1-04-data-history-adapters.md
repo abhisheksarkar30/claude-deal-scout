@@ -4,7 +4,7 @@
 
 - **Bead ID**: br-DS-1-04
 - **Priority**: P0 (critical — R10 price history is in scope; the adapters are its data source)
-- **Status**: pending
+- **Status**: partial — sale calendar shipped; H3 survey and history adapters deferred (see evidence-04.txt)
 - **Original Estimate**: 2h
 - **Dependencies**: br-DS-1-02
 - **Blocks**: br-DS-1-07
@@ -81,4 +81,40 @@ QA note). The sale calendar is separate data so the plan's "typical, not announc
 - `.beads/DS-1/evidence-04.txt` (create — H3 survey and decision)
 
 ## Review Notes
+
+Implemented 2026-10-09. **Status: partially complete — the sale calendar shipped; the H3 survey and any
+history adapter are DEFERRED.**
+
+**What shipped: `data/sale-calendar.json`.** Eight approximate Indian sale windows (Republic Day, Holi,
+Summer, Prime Day, Independence Day, Great Indian Festival / Big Billion Days, Diwali / Dhanteras, Year
+End), each carrying its months and a note that it is approximate and shifts yearly. Format is the
+top-level array `history.js loadSaleCalendar` already consumes — `{ name, months: [1-12] }` — with extra
+`note` keys ignored by the overlap test.
+
+Verified end-to-end rather than assumed: loading the real file and running a December-recurring fixture
+through `history.js` gives `windows loaded: 8`, next dip month 12, confidence **`high`** via the "Year
+End Sale" window, verdict `wait`. Before this file existed the same fixture resolved to `medium`.
+
+**What is deferred: H3 and every `sites/<history-site>.json`.** The site survey is live browser work (§7;
+the plan says the built-in browser pane on public pages, never the user's real Chrome) and was deferred
+with the other live checks on the human's instruction. `.beads/DS-1/evidence-04.txt` holds the full
+procedure: candidate sites, the four-value usability rule (`current`, `lowest`, `highest`, `average` —
+all four or it counts as no data), the "ship no adapter" branch, the adapter schema and the two
+`loadSites` rejections a new adapter must survive.
+
+**Consequence, stated rather than left implicit: with no history adapter on disk, R10 is inert.** §3.4
+step 4 finds no applicable adapter, omits `history`, and adds a "no price history found" gap note; §3.6
+returns `no_signal`. The pipeline degrades exactly as designed and never invents a pattern — but the
+buy/wait verdict produces nothing until the survey runs. This is the single largest gap between "the
+code is written" and "the feature works", and it should be the first thing done in the deferred live
+sitting.
+
+**No adapter was written speculatively.** Authoring a `history` adapter for a real third-party site
+without having read that site would be inventing the URL shape and the coverage claim — precisely what
+the survey exists to prevent, and what §10's QA note warns against.
+
+**Carried for the live sitting (also in evidence-03.txt):** the Flipkart account paths in
+`sites/flipkart.json` are unverified and were written from general knowledge (see br-DS-1-02's Review
+Notes). Worth confirming in the same session, since a wrong path means a blocked read rather than an
+exposed one.
 
