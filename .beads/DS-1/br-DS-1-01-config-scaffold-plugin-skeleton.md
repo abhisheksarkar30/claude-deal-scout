@@ -4,7 +4,7 @@
 
 - **Bead ID**: br-DS-1-01
 - **Priority**: P0 (critical — nothing else can land without manifests and a test runner)
-- **Status**: pending
+- **Status**: done
 - **Original Estimate**: 1h
 - **Dependencies**: None
 - **Blocks**: br-DS-1-02, br-DS-1-05
@@ -81,4 +81,31 @@ entry keeps the 15-round cross-review artifacts (currently untracked) out of com
 - `.gitignore` (modify — add `review/`)
 
 ## Review Notes
+
+Implemented 2026-10-09.
+
+- **License — §7's open decision is now settled, not a gap.** The human confirmed **MIT** on
+  2026-10-09, so `LICENSE` was written as MIT (2026, Abhishek Sarkar) with no residual ambiguity.
+  No other artifact would be affected had a different license been chosen.
+- **Item 7 (`.gitignore`) needed no edit.** `review/` was already present in the file, so the
+  `docs/planning/review/` artifacts were already ignored. Verified: `git check-ignore
+  docs/planning/review/` prints the path.
+- **Outcome Definition verified on Node v24.14.1 / npm 11.11.0:**
+  - `npm test` (`node --test`) → exit 0, `tests 0 / pass 0 / fail 0`.
+  - All three manifests (`plugin.json`, `marketplace.json`, `package.json`) parse as JSON.
+  - `git status` shows `.claude-plugin/`, `LICENSE`, `package.json` as new and
+    `docs/planning/review/` as ignored.
+- **Test directory is `test/`, not `tests/`.** Plan §3.1 line 63 specifies `test/*.test.js`. Some
+  bead bodies wrote `tests/`; `test/` is authoritative and is what `CLAUDE.md` now records, so later
+  beads must write there.
+- **Manifest declared minimally on purpose.** `plugin.json` carries only `name` / `version` /
+  `description` / `author`; `agents/`, `skills/` and `hooks/` sit at the plugin root and are
+  auto-discovered, so no explicit path keys are needed (unlike `agentic-ai-artifacts`, which uses
+  non-default `.claude/skills` and must declare them).
+- **Flagged for bead 03 (does not block this bead):** the bundled `plugin-authoring` skill on this
+  build (v2.1.289) documents a *newer* plugin API in which `hooks/hooks.json` is
+  `{ "modules": ["./register.tsx"] }` — TypeScript hooks modules exporting `register` — which is a
+  different shape from the classic `PreToolUse`/`PostToolUse` matcher entries the plan's §3.8
+  targets. Both may be supported, but bead 03 must confirm which format this build actually honours
+  before wiring the guard, because the entire safety design (R1) depends on that hook firing.
 
