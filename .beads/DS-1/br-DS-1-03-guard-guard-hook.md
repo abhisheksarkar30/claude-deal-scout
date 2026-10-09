@@ -4,7 +4,7 @@
 
 - **Bead ID**: br-DS-1-03
 - **Priority**: P0 (critical — the only real enforcement layer; largest and most security-critical bead)
-- **Status**: pending
+- **Status**: done (code complete; live checks H2/H4/H5 deferred — see evidence-03.txt)
 - **Original Estimate**: 2-3h
 - **Dependencies**: br-DS-1-02
 - **Blocks**: br-DS-1-07
@@ -103,4 +103,66 @@ use. Getting fail-closed and scoping wrong is the difference between a block and
 - `.beads/DS-1/evidence-03.txt` (create — H2/H4/H5 observations)
 
 ## Review Notes
+
+Implemented 2026-10-09. **Status: code complete, live checks DEFERRED** — see below.
+
+**Outcome Definition, the parts that can be verified now.**
+- `node --test test/guard.test.js` exits 0 — 19 tests, 19 pass. Full suite (`npm test`) is 96 pass / 0 fail.
+- `node scripts/guard.js selftest` exits 0: `selftest OK: 31 cases`.
+- Ablating a single check in the matrix makes it exit non-zero, as required. Verified by adding `computer`
+  to `ALLOWED_TOOLS` in `policy.js`: selftest printed
+  `selftest MISS: deny: computer — expected exit 2, got exit 0` / `selftest FAILED: 1 of 31 cases missed`
+  and exited **1**. The mutation was reverted and `policy.js` confirmed byte-identical.
+
+**Negative control 2.** Mutation: `return EXIT_BLOCKED;` → `return 0;` in `failClosed` (i.e. the
+fail-closed behaviour removed). Reverted afterwards; `cmp` confirms `scripts/guard.js` is byte-identical
+to its pre-mutation state. Five tests failed, all of them fail-closed cases:
+
+- `unparseable stdin exits 2`
+- `empty stdin exits 2`
+- `a JSON payload that is not an object exits 2`
+- `an unknown mode exits 2`
+- `a broken adapter directory fails closed`
+
+Five rather than one is the point: the catch is the single path every unexpected condition routes
+through, so removing it fails open everywhere at once. That is exactly why §2 notes every non-zero exit
+other than 2 does **not** block.
+
+### Live checks H2 / H4 / H5 — DEFERRED, not verified
+
+The human chose on 2026-10-09 to defer all live-browser verification (beads 03, 04, 07) to one later
+sitting. **Nothing in this bead touched their Chrome.** `.beads/DS-1/evidence-03.txt` holds the full
+procedure, the pass condition and the false-branch action for each of H2, H4 and H5, plus two extra
+things worth confirming in the same session (that the hooks fire for the subagent and *not* for ordinary
+Chrome use; that the Flipkart account paths in `sites/flipkart.json` are real).
+
+Until those run, treat as **unproven**: that the `post` redirect layer actually sees a final URL (H2),
+that the `PreToolUse` matcher covers every denied tool name (H4), and that URL-bearing tools key their
+target under `url` (H5). The fail-closed branch for a missing `url` holds regardless of H5's outcome —
+that is deliberate, so a schema rename breaks loudly instead of silently disabling the check.
+
+### Decisions and notes
+
+- **`DEAL_SCOUT_SITES_DIR` env override added** so the "a bad adapter ⇒ exit 2" case is testable without
+  corrupting the shipped adapters. The guard loads `process.env.DEAL_SCOUT_SITES_DIR` or falls back to
+  `../sites`. This is a test seam, not a new attack surface: only whoever launches the process can set
+  it, and anyone who can set the process's environment already controls the process.
+- **`post` reads `tool_response`, falling back to `tool_result`.** Which of the two this build sends is
+  unverified (it is the same unknown as H2); reading both costs nothing and avoids a silent no-op if the
+  name differs.
+- **`post` scans every URL in the response and blocks on any off-allowlist one**, per §3.2's literal
+  wording. Conservative by design: a response mentioning an off-allowlist URL at all — a redirect chain,
+  an interstitial — blocks the page, which is the intent. The walk is bounded (`MAX_WALK_DEPTH` 20,
+  `MAX_URLS` 50) so a hostile or enormous response cannot blow the stack or the budget. A false positive
+  costs the agent one page; a false negative costs the redirect control entirely.
+- **Hook format confirmed for this build.** The classic `hooks/hooks.json` shape — `PreToolUse` entries
+  with `matcher` + `{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/…\"" }` — is current,
+  checked against `agentic-keepawake` 0.2.0 and `superpowers` 6.4.1. This resolves the concern raised in
+  br-DS-1-01's Review Notes: the bundled `plugin-authoring` skill's `hooks/hooks.json` =
+  `{ "modules": [...] }` shape is a separate, additive mod API, not a replacement for this one.
+- **Observation 3 (missing mutation controls) — neither rule was hard to pin.** Both the `post` redirect
+  block and the "URL-bearing tool with no `url` ⇒ exit 2" rule have positive tests but no §5.4 mutation
+  control. I did not add controls, per the bead's instruction. Recording that they are easy to pin if a
+  future reviewer wants them: emptying `URL_BEARING_TOOLS` flips the two `without a url` tests, and
+  neutering the `post` block's branch flips `post blocks a landing off the allowlist`.
 

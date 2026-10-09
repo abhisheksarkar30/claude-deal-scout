@@ -1,0 +1,27 @@
+{
+  "description": "Path-allowlist guard for the claude-deal-scout research subagent. Scope is enforced inside the guard (agent_type === \"claude-deal-scout:deal-scout\"), so this never affects ordinary Claude in Chrome use.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__(claude-in-chrome|Claude_Browser)__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/guard.js\" pre"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__(claude-in-chrome|Claude_Browser)__navigate",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/guard.js\" post"
+          }
+        ]
+      }
+    ]
+  }
+}

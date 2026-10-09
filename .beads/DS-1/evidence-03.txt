@@ -1,0 +1,112 @@
+================================================================================
+evidence-03.txt — br-DS-1-03 live checks: H2, H4, H5
+================================================================================
+
+STATUS: **DEFERRED — NOT YET RUN.**
+
+On 2026-10-09 the human chose to defer every live-browser verification in this
+plan (beads 03, 04, 07) to a single later sitting, so that the whole diff could
+be written and reviewed first without the agent driving their real Chrome.
+
+Nothing in this bead has touched the user's browser. The code and the wiring are
+complete and covered by automated tests; what is missing is the *observation*
+that confirms the platform behaves as the plan assumes.
+
+DO NOT READ THE THREE HYPOTHESES BELOW AS VERIFIED. They are open.
+
+Required before this bead can be called fully closed. Each needs the user's
+explicit go-ahead first (plan §7).
+
+--------------------------------------------------------------------------------
+H2 — does a `navigate` tool response contain the final URL?
+--------------------------------------------------------------------------------
+Why it matters: the `post` hook (`guard.js post`) is the only control that
+catches an open redirect landing off the allowlist. It works by scanning the
+tool response for URLs. If the response never carries the final URL, that layer
+is inert — it will pass everything, silently.
+
+Procedure
+  1. Ask the user to open Claude in Chrome and a spare tab.
+  2. Have the deal-scout agent (or any session, scoped to the agent so the guard
+     runs) call `navigate` to an allowlisted URL that redirects, e.g.
+     https://www.amazon.in/s?k=phone
+  3. Capture the raw tool response. With the plugin installed, add a temporary
+     dump or read the transcript with `claude --debug`.
+
+Pass  : the response contains a field holding the final URL (the one the browser
+        actually landed on), reachable by `collectUrls` in scripts/guard.js.
+Fail  : no final URL anywhere in the response.
+
+If it FAILS:
+  - The post-navigation layer is a NO-OP. Say so in Review Notes and remove any
+    prose that claims two independent redirect controls.
+  - Redirect protection then rests solely on the pre-check (`checkUrl` on the
+    requested URL) plus the agent's instruction to discard and close a page that
+    is not what it asked for. That is R2's documented residual.
+  - Do NOT delete the `post` hook: if a later platform version starts sending the
+    final URL, it begins working with no code change.
+
+--------------------------------------------------------------------------------
+H4 — are all denied tools exposed under the MCP namespace?
+--------------------------------------------------------------------------------
+Why it matters: the `PreToolUse` matcher is
+  mcp__(claude-in-chrome|Claude_Browser)__.*
+A denied tool exposed under any OTHER name never matches, so the hook never
+fires and `checkTool` never sees it. That is a SILENT GAP, which is worse than a
+fail-open the guard could catch (R9).
+
+Procedure
+  1. Enumerate every tool name Claude in Chrome exposes in the session.
+     `/mcp` lists connected servers and their tools; the transcript or
+     `claude --debug` shows the full names.
+  2. Check each against the deny set in scripts/policy.js ALLOWED_TOOLS:
+       computer, form_input, javascript_tool, file_upload, upload_image,
+       gif_creator, read_console_messages, read_network_requests
+  3. Also confirm the seven allowed names appear as expected:
+       tabs_context_mcp, tabs_create_mcp, tabs_close_mcp, navigate, read_page,
+       get_page_text, find
+
+Pass  : every denied tool is `mcp__Claude_Browser__<name>` or
+        `mcp__claude-in-chrome__<name>`.
+Fail  : any denied tool (or a tool not in the allow set) appears under a bare,
+        non-MCP name.
+
+If it FAILS: widen the matcher in hooks/hooks.json (or add a second hook entry)
+to cover that name BEFORE this bead closes. A matcher that does not fire is not
+a control at all.
+
+--------------------------------------------------------------------------------
+H5 — is every URL-bearing tool_input field named `url`?
+--------------------------------------------------------------------------------
+Why it matters: `evaluatePre` reads `tool_input.url`. If a URL-bearing tool uses
+a different key, the URL is never checked — and the tool would look like a
+non-URL tool.
+
+Procedure
+  1. Inspect the input schema of each of the seven allowed tools.
+  2. Note the key each uses for its target URL, if any.
+
+Pass  : every URL-bearing allowed tool uses the key `url`.
+Fail  : some other key (e.g. `tabUrl`, `target`).
+
+Regardless of the outcome — and this is deliberate — `navigate` and
+`tabs_create_mcp` are listed in URL_BEARING_TOOLS in scripts/guard.js, and a call
+to either with no string under `url` exits 2 (fail closed). So a future schema
+rename breaks the guard loudly rather than silently disabling the URL check.
+
+If it FAILS: add the real key to the read in `evaluatePre` AND keep the
+fail-closed branch, so an unknown shape still blocks.
+
+--------------------------------------------------------------------------------
+Also worth confirming while the browser is open
+--------------------------------------------------------------------------------
+- The plugin's hooks actually fire when the deal-scout subagent calls a Chrome
+  tool, and do NOT fire for ordinary Chrome use outside that agent (R3).
+- hooks/hooks.json is in the format this build honours. Verified statically
+  against agentic-keepawake 0.2.0 and superpowers 6.4.1 (classic
+  PreToolUse/PostToolUse matcher entries with "type": "command"), but not yet
+  observed firing.
+- The Flipkart account paths in sites/flipkart.json (/viewcart, /wishlist) are
+  unverified and were written from general knowledge — see br-DS-1-02's Review
+  Notes. Confirm against a logged-in session and correct the file if they differ.
+================================================================================
