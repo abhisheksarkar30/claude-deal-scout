@@ -14,7 +14,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "mcp__(claude-in-chrome|Claude_Browser)__navigate",
+        "matcher": "mcp__(claude-in-chrome|Claude_Browser)__(navigate|tabs_context_mcp)",
         "hooks": [
           {
             "type": "command",

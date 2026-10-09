@@ -112,7 +112,10 @@ test('the read-only tools are allowed', () => {
     const result = run('pre', pre(tool, url));
     assert.equal(result.code, 0, `${tool}: ${result.stderr}`);
   }
+  // tabs_create_mcp takes no parameters: it must pass with no url, and a url, if sent, is still checked.
+  assert.equal(run('pre', pre('tabs_create_mcp')).code, 0);
   assert.equal(run('pre', pre('tabs_create_mcp', 'https://www.amazon.in/s?k=phone')).code, 0);
+  assert.equal(run('pre', pre('tabs_create_mcp', 'https://evil.example.com/x')).code, 2);
 });
 
 test('every dangerous Chrome tool is denied, bare or MCP-prefixed', () => {
@@ -172,19 +175,17 @@ test('a URL is checked even on a tool that does not normally carry one', () => {
 // pre — fail closed on a missing url for a URL-bearing tool
 // ---------------------------------------------------------------------------
 
-test('the five non-url tools are allowed with no url key', () => {
-  for (const tool of ['tabs_context_mcp', 'tabs_close_mcp', 'read_page', 'get_page_text', 'find']) {
+test('the six non-url tools are allowed with no url key', () => {
+  for (const tool of ['tabs_context_mcp', 'tabs_create_mcp', 'tabs_close_mcp', 'read_page', 'get_page_text', 'find']) {
     const result = run('pre', pre(tool));
     assert.equal(result.code, 0, `${tool}: ${result.stderr}`);
   }
 });
 
-test('a URL-bearing tool with no url key is denied', () => {
-  for (const tool of ['navigate', 'tabs_create_mcp']) {
-    const result = run('pre', pre(tool));
-    assert.equal(result.code, 2, tool);
-    assert.match(result.stderr, /without a "url"/);
-  }
+test('navigate with no url key is denied', () => {
+  const result = run('pre', pre('navigate'));
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /without a "url"/);
   // ...and an empty string is no better than a missing key.
   assert.equal(run('pre', pre('navigate', '')).code, 2);
 });
@@ -211,6 +212,12 @@ test('post blocks a landing off the allowlist, telling the agent to discard the 
 test('post finds a URL nested anywhere in the response', () => {
   const nested = run('post', post({ content: [{ text: 'landed at https://tracker.example.com/x?y=1 ok' }] }));
   assert.equal(JSON.parse(nested.stdout).decision, 'block');
+});
+
+test('post catches an off-allowlist tab in a tabs_context_mcp listing (navigate does not report the landing)', () => {
+  const listing = { availableTabs: [{ tabId: 1, title: 'x', url: 'https://ad.example.com/promo' }] };
+  const result = run('post', { ...post(listing), tool_name: 'mcp__claude-in-chrome__tabs_context_mcp' });
+  assert.equal(JSON.parse(result.stdout).decision, 'block');
 });
 
 test('post allows a response that carries no URL at all', () => {

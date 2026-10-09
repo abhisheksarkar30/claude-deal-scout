@@ -2,7 +2,7 @@
 evidence-07.txt — br-DS-1-07: H1 (`tools:` frontmatter), H2 reconfirmation
 ================================================================================
 
-STATUS: **H1 AND H2 DEFERRED — NOT YET RUN.**
+STATUS: **RUN 2026-10-09 — H1 PASS. H2 reconfirmation: see evidence-03.txt (FAIL).**
 
 On 2026-10-09 the human chose to defer every live-browser verification in this
 plan (beads 03, 04, 07) to one later sitting. Nothing in this bead has touched
@@ -79,3 +79,15 @@ These are §5.3's "not covered by any automated test" items, checked by eye only
   also accepts `Claude_Browser`. If the live server is the latter, the `tools:`
   list will not match and H1 effectively fails for a naming reason.
 ================================================================================
+
+--------------------------------------------------------------------------------
+Live results — 2026-10-09 (claude -p --chrome --plugin-dir ., foreground subagent)
+--------------------------------------------------------------------------------
+H1 — PASS. The subagent reported exactly the seven listed tools (tabs_context_mcp, tabs_create_mcp,
+  tabs_close_mcp, navigate, read_page, get_page_text, find). javascript_tool and
+  read_network_requests do not exist for it. The `tools:` list is honoured, so it is a layer below
+  the guard. One run on one build (2.1.287); re-check after an upgrade.
+Server name: the live server is claude-in-chrome, matching the frontmatter.
+H2 from inside the subagent: not separately run; the main-thread result in evidence-03.txt applies
+  (navigate does not report the landing URL).
+Skill preflight, foreground-only spawn and full end-to-end run: NOT run.

@@ -57,13 +57,15 @@ important residual in this document: if the guard does not run, nothing mechanic
 
 ### R2 — Open redirects on allowlisted hosts
 
-**Mitigation.** The `post` hook ("PostToolUse on `navigate`") scans the tool response for URLs and blocks
-the page if any host is off-allowlist, telling the agent to discard the page and close the tab.
-**Residual.** **This layer is unverified** — see hypothesis H2 in `.beads/DS-1/evidence-03.txt`. It works
-only if the `navigate` response actually carries the final landed URL. If it does not, the layer is inert
-and redirect protection rests entirely on the pre-check (which only sees the *requested* URL) plus the
-agent's prompt-level instruction to discard an unexpected page. Do not count this as two controls until H2
-is confirmed.
+**Mitigation.** The `post` hook ("PostToolUse on `navigate` and `tabs_context_mcp`") scans the tool
+response for URLs and blocks the page if any host is off-allowlist, telling the agent to discard the page
+and close the tab. The agent is told to call `tabs_context_mcp` after every `navigate`.
+**Residual.** H2 was live-checked and **failed for `navigate`**: its response only echoes the *requested*
+URL (see `.beads/DS-1/evidence-03.txt`), so a post hook on `navigate` alone sees nothing. The real landing
+URL appears in a `tabs_context_mcp` listing, which is why the hook now matches that tool too. That relies on
+the agent making the call (a prompt-level instruction), and it was observed on one sample only. Redirect
+protection is therefore the pre-check (requested URL only) plus this after-the-fact check; neither is
+independent of the agent behaving.
 
 ### R3 — Main thread driving Chrome unguarded
 
@@ -132,10 +134,9 @@ first place — which is also only an instruction.
 ### R11 — The `tools:` allowlist is unverified
 
 **Mitigation.** The agent's frontmatter lists exactly the seven read-only tools.
-**Residual.** Whether the platform **honours** that list is unverified — see hypothesis H1 in
-`.beads/DS-1/evidence-07.txt`. If it does not, the guard is the **only** enforcement layer and this
-document's "two independent layers" framing is wrong. Until H1 is confirmed, treat the guard as the sole
-control.
+**Residual.** H1 was live-checked and **passed**: the subagent had exactly the seven listed tools, and
+`javascript_tool` / `read_network_requests` did not exist for it (see `.beads/DS-1/evidence-07.txt`). One
+run on one build; re-check after a Claude Code upgrade. The guard's default-deny remains the second layer.
 
 ## Manual end-to-end checklist
 

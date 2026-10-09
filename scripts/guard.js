@@ -6,7 +6,7 @@
  * instructional (R4). A prompt is not a control.
  *
  *   node scripts/guard.js pre        # PreToolUse — deny a tool or URL before it runs
- *   node scripts/guard.js post       # PostToolUse (navigate) — catch an off-allowlist landing
+ *   node scripts/guard.js post       # PostToolUse (navigate, tabs_context_mcp) — catch an off-allowlist landing
  *   node scripts/guard.js selftest   # run the policy matrix; non-zero on any miss
  *
  * Everything is scoped to `agent_type === "claude-deal-scout:deal-scout"`, so ordinary Chrome use is
@@ -21,8 +21,12 @@ const { checkTool, checkUrl, loadSites } = require('./policy');
 
 const AGENT_TYPE = 'claude-deal-scout:deal-scout';
 
-/** Tools whose `tool_input` must carry a `url`; a missing one is a contract violation, not a pass. */
-const URL_BEARING_TOOLS = ['navigate', 'tabs_create_mcp'];
+/**
+ * Tools whose `tool_input` must carry a `url`; a missing one is a contract violation, not a pass.
+ * `tabs_create_mcp` is deliberately NOT here: it takes no parameters (H5, live-checked), so it opens a
+ * blank tab and the URL is checked on the `navigate` that follows.
+ */
+const URL_BEARING_TOOLS = ['navigate'];
 
 const EXIT_BLOCKED = 2;
 
@@ -191,11 +195,12 @@ const SELFTEST_CASES = [
 
   // Fail-closed on a missing url for a URL-bearing tool.
   ['deny: navigate without a url', 'pre', preCall('navigate'), EXIT_BLOCKED],
-  ['deny: tabs_create_mcp without a url', 'pre', preCall('tabs_create_mcp'), EXIT_BLOCKED],
+  ['allow: tabs_create_mcp takes no url (blank tab)', 'pre', preCall('tabs_create_mcp'), 0],
 
   // Post-navigation.
   ['allow: post on an allowlisted landing', 'post', { agent_type: AGENT_TYPE, tool_name: 'mcp__claude-in-chrome__navigate', tool_response: { url: 'https://www.amazon.in/dp/B0XXXXXXXX' } }, 0],
   ['deny: post on an off-allowlist landing', 'post', { agent_type: AGENT_TYPE, tool_name: 'mcp__claude-in-chrome__navigate', tool_response: { url: 'https://ad.example.com/promo' } }, 0, true],
+  ['deny: post on a tab listing that shows an off-allowlist tab', 'post', { agent_type: AGENT_TYPE, tool_name: 'mcp__claude-in-chrome__tabs_context_mcp', tool_response: { availableTabs: [{ tabId: 1, url: 'https://ad.example.com/promo' }] } }, 0, true],
 ];
 
 function selftest(adapters) {

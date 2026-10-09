@@ -29,6 +29,11 @@ The user is already logged in to the shop sites in their own browser. You browse
 - **Stay inside the adapters you were given.** Only the URLs in the adapter list are reachable; anything
   else is blocked before it runs. Do not attempt workarounds.
 
+- **Check where every navigation landed.** The `navigate` result only echoes the URL you asked for, not
+  where the browser ended up. After each `navigate`, call `tabs_context_mcp` and read the tab's real URL. If
+  it is not on the shop or history site you intended, discard the page, close the tab with
+  `tabs_close_mcp`, and add a `blocked` entry.
+
 ## Procedure
 
 ### 1. Read the user's own lists, per shop adapter

@@ -2,7 +2,7 @@
 evidence-03.txt — br-DS-1-03 live checks: H2, H4, H5
 ================================================================================
 
-STATUS: **DEFERRED — NOT YET RUN.**
+STATUS: **RUN 2026-10-09 (live sitting) — H2 FAIL, H4 PASS, H5 PARTIAL FAIL. See "Live results" at the end.**
 
 On 2026-10-09 the human chose to defer every live-browser verification in this
 plan (beads 03, 04, 07) to a single later sitting, so that the whole diff could
@@ -110,3 +110,28 @@ Also worth confirming while the browser is open
   unverified and were written from general knowledge — see br-DS-1-02's Review
   Notes. Confirm against a logged-in session and correct the file if they differ.
 ================================================================================
+
+--------------------------------------------------------------------------------
+Live results — 2026-10-09, Claude Code 2.1.287, claude-in-chrome (user go-ahead given in chat)
+--------------------------------------------------------------------------------
+H2 — FAIL (one sample). `navigate` to https://amazon.in/s?k=phone (redirects to www.amazon.in)
+  returned only "Navigated to https://amazon.in/s?k=phone" plus a Tab Context block showing the
+  REQUESTED url (title was still the url, i.e. page not yet loaded). The real landing,
+  https://www.amazon.in/s?k=phone, appeared only in a LATER tabs_context_mcp call. So the `post`
+  hook on navigate cannot see a redirect landing.
+  Action taken (0.1.1): PostToolUse matcher widened to navigate|tabs_context_mcp; the agent prompt now
+  requires tabs_context_mcp after every navigate. Not live-verified end to end that the agent does so.
+
+H4 — PASS. Every Chrome tool in the session is mcp__claude-in-chrome__<name> (or
+  mcp__Claude_Browser__<name> for the built-in pane); none appears under a bare name. Note
+  Claude_Browser names its tab tools tabs_context / tabs_create / tabs_close (no _mcp), so those are
+  default-denied by checkTool; harmless, the agent only uses claude-in-chrome. Extra tools such as
+  browser_batch exist under the matcher and are denied by default.
+
+H5 — PARTIAL FAIL. navigate uses `url` (PASS). tabs_create_mcp has NO parameters (FAIL of the
+  assumption): the old URL_BEARING_TOOLS entry made the guard block every tab creation
+  ("tabs_create_mcp was called without a url — failing closed"), observed live from the subagent.
+  Fixed in 0.1.1: tabs_create_mcp removed from URL_BEARING_TOOLS; navigate still fails closed.
+
+Hooks fire for the subagent: confirmed (the block above came from guard.js via the plugin hook).
+NOT confirmed: that hooks do NOT fire for ordinary Chrome use (R3); Flipkart /viewcart and /wishlist.
