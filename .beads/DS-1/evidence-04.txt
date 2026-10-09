@@ -148,3 +148,25 @@ OPEN QUESTION FOR THE HUMAN (changes the design, so not decided here):
   (c) Leave R10 inert and ship; the pipeline already degrades to `no_signal` with a gap note.
   Also decide how `average` maps: pricehistoryapp's is a 30-day average.
 ================================================================================
+
+--------------------------------------------------------------------------------
+Survey results, part 2 — 2026-10-09, robots.txt + curl only (NO rendered-page check)
+--------------------------------------------------------------------------------
+The built-in browser pane was unavailable (auto-mode classifier outage), so these are HTTP-level
+findings. They say nothing yet about what a rendered page exposes without a click.
+
+buyhatke.com   robots.txt: "User-agent: *  Allow: /", disallows /api/, /redirect/, /webview/ only.
+               Product/search pages are permitted. /search?q=<text> returns 200 (293 KB SPA shell),
+               no price-stat text in the server HTML. Whether the rendered page yields
+               current/lowest/highest/average is UNKNOWN. Best remaining candidate: robots-permitted
+               and it has a GET search.
+keepa.com      robots.txt: only /r/, /ajax/ disallowed. Product lookup is a hash route
+               (keepa.com/#!product/10-<ASIN>, domain 10 = amazon.in), so it IS addressable from an
+               ASIN, but the page is a JS app (8 KB shell) and useful data is login/paid and
+               chart-drawn. Likely fails the four-value text rule; UNVERIFIED. Covers amazon.in only.
+smartprix.com  robots.txt is permissive for generic agents but a plain GET of /search returns 403
+               (bot protection). Treated as EXCLUDED (R7: respect bot signals).
+pricee.com     no robots.txt (404 from storage). No history evidence found; not examined further.
+
+DECISION: still no history adapter shipped. Next step is rendered-page reads of buyhatke and keepa in
+the built-in browser, then the human's call on pricehistoryapp listing-page discovery vs leaving R10 inert.
