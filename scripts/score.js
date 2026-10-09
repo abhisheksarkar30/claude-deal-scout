@@ -275,7 +275,7 @@ function betterThan(a, b) {
   const sourceA = String(a.source ?? '');
   const sourceB = String(b.source ?? '');
   if (sourceA !== sourceB) return sourceA < sourceB ? -1 : 1;
-  return a._index - b._index;
+  return a.index - b.index;
 }
 
 // ---------------------------------------------------------------------------
@@ -309,7 +309,7 @@ function score(input, adapters) {
 
     valid.push({
       ...validated,
-      _index: index,
+      index,
       effective_price: Math.round(effectivePrice * 100) / 100,
       rating_adj: Math.round(ratingAdj * 1000) / 1000,
       flags: flagsFor({ candidate: validated, effectivePrice, ratingAdj, budget, offerImplausible: implausible }),
@@ -342,7 +342,7 @@ function score(input, adapters) {
     bestProduct = scored[0];
 
     for (const candidate of valid) {
-      const match = scored.find((s) => s._index === candidate._index);
+      const match = scored.find((s) => s.index === candidate.index);
       candidate.score = match ? match.score : null;
     }
   } else {
@@ -359,10 +359,10 @@ function score(input, adapters) {
   for (const candidate of valid) {
     if (typeof candidate.product_key !== 'string' || candidate.product_key === '') continue;
     if (!groups.has(candidate.product_key)) groups.set(candidate.product_key, []);
-    groups.get(candidate.product_key).push(candidate._index);
+    groups.get(candidate.product_key).push(candidate.index);
   }
 
-  const cleaned = valid.map(({ _index, ...rest }) => rest);
+  const cleaned = valid;
 
   return {
     candidates: cleaned,
@@ -377,9 +377,7 @@ function score(input, adapters) {
 }
 
 function strip(candidate) {
-  if (!candidate) return null;
-  const { _index, ...rest } = candidate;
-  return rest;
+  return candidate || null;
 }
 
 module.exports = {

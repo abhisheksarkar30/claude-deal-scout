@@ -4,7 +4,7 @@
 
 - **Bead ID**: br-DS-1-07
 - **Priority**: P0 (critical — this is the user-facing entry point and the untrusted extraction layer)
-- **Status**: pending
+- **Status**: done (code complete; live checks H1/H2 deferred — see evidence-07.txt)
 - **Original Estimate**: 3h (largest bead — the agent prompt carries the whole extraction contract)
 - **Dependencies**: br-DS-1-03, br-DS-1-04, br-DS-1-05, br-DS-1-06
 - **Blocks**: br-DS-1-08
@@ -120,4 +120,73 @@ so its preflight and its "nothing was bought" disclosure are the visible half of
 - `.beads/DS-1/evidence-07.txt` (create — H1/H2 observations)
 
 ## Review Notes
+
+Implemented 2026-10-09. **Status: code complete; live checks H1/H2 DEFERRED.**
+
+**Outcome Definition, verified.**
+- Both files exist and are valid plugin artifacts. The agent's frontmatter parses and its `tools:` line
+  contains **exactly** the seven read-only tools, every one fully MCP-prefixed
+  (`mcp__claude-in-chrome__tabs_context_mcp`, `…tabs_create_mcp`, `…tabs_close_mcp`, `…navigate`,
+  `…read_page`, `…get_page_text`, `…find`) — checked by parsing the file, not by eye.
+- The skill declares `name: find-best-deal` and carries the preflight command. That command,
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/guard.js" selftest`, **exits 0** against the built repo
+  (`selftest OK: 31 cases`).
+- Full suite (`npm test`) is **100 pass / 0 fail**.
+
+### One deviation from this bead's file list: `scripts/report.js` was added
+
+Beads 05 and 06 built `history.js` and `score.js` as **libraries** — they export `analyze` / `score` and
+have no CLI. §3.7 step 4 requires the skill to *run* both on the same raw candidate array, so something
+had to bridge them. The alternatives were inlining `node -e "require(...)"` fragments into a prompt
+(fragile, untestable, and it puts logic where it can't be reviewed) or adding one small script.
+
+Added `scripts/report.js`: reads the agent's JSON on stdin, calls `score()` and `analyzeAll()`, joins
+them, prints the merged report. The skill's step 4 is now one command. It is not in this bead's "Files to
+Touch" list, which is why it is recorded here rather than passed over.
+
+**It also earned a test that did not exist before.** `test/report.test.js` covers the whole pipeline
+end to end without a browser — validate, rank, history, merge — including the alignment case below.
+
+### `scripts/score.js` was amended (a br-DS-1-06 file)
+
+`score()` was dropping the candidate's original input index (`_index`) before returning. That made the
+two output arrays unjoinable: validation can drop candidates, so `report.candidates[i]` is **not**
+`historyResults[i]`. The merged report would have silently attached one product's price history to
+another — the kind of bug that looks like a data problem, not a code problem.
+
+Fix: the output candidate now carries `index` (its position in the input `candidates` array), and
+`report.js` joins on it. `test/report.test.js`'s second case pins exactly this — an invalid candidate at
+input index 1 must not shift the survivor at index 2 onto the wrong history. `br-DS-1-06`'s own tests all
+still pass unchanged.
+
+### Carried from the round-15 review
+
+- **Observation 5 — `product_key`.** The agent prompt now contains the worked example the plan calls the
+  sole mechanism: tokens lowercased, punctuation-stripped, **sorted**, joined with `-`, with `128 GB`
+  normalising to `128gb`, so `"Apple iPhone 15 (Blue, 128 GB)"` and `"Apple iPhone 15 128GB Blue"` both
+  yield `128gb-15-apple-blue-iphone`. Sorting is what makes the key order-independent, which is the whole
+  reason it can match across two sites.
+  **No automated test covers cross-site `product_key` grouping** — this remains true, and it is a real gap:
+  the extraction is LLM behaviour, so a wrong key silently fails to group rather than failing loudly. The
+  only check is a manual one, in `evidence-07.txt`.
+- **Plan gap shared with br-DS-1-06 (the candidate allowlist).** The agent prompt reproduces br-DS-1-06's
+  `CANDIDATE_FIELDS` exactly — `title`, `url`, `source`, `product_key`, `price`, `mrp`, `rating`,
+  `review_count`, `third_party_seller`, `offers`, `history`, `must_haves_met`, `must_haves_reason` — and
+  states the `offers` element shape. **The two agree; no divergence to report.**
+
+### Notes
+
+- **Live checks H1 and H2 are DEFERRED.** `.beads/DS-1/evidence-07.txt` holds both procedures and the
+  false-branch action. The load-bearing one is H1: if a subagent's `tools:` frontmatter does not actually
+  restrict, then the guard is the **sole** control, not one of two — and R1/R3 forbid describing one layer
+  as two. The plan's own fallback text is carried into the evidence file.
+- **Server-name risk flagged.** The frontmatter names `claude-in-chrome`; the hook matcher accepts both
+  `claude-in-chrome` and `Claude_Browser`. If this build's live server is the latter, the `tools:` list
+  will not match and H1 fails for a naming reason rather than a platform one. Recorded in
+  `evidence-07.txt` so it is checked rather than assumed.
+- **No automated test for the prompt text**, per this bead's Test Specification — the agent's extraction
+  is LLM behaviour and §5.3 deliberately keeps it out of the deterministic set. Nothing was fabricated to
+  assert that the files merely exist.
+- The skill states plainly that the main thread must never drive Chrome: the guard only covers the
+  subagent, so a main-thread Chrome call bypasses the only enforcement layer there is.
 
