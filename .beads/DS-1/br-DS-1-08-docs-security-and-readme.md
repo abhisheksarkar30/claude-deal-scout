@@ -4,7 +4,7 @@
 
 - **Bead ID**: br-DS-1-08
 - **Priority**: P1 (high — required for the security story and for the plugin to be usable/adoptable)
-- **Status**: pending
+- **Status**: done
 - **Original Estimate**: 1.5h
 - **Dependencies**: br-DS-1-07
 - **Blocks**: None
@@ -69,4 +69,42 @@ install the plugin and how to extend it without reading the plan.
   skeleton was created by br-DS-1-01)
 
 ## Review Notes
+
+Implemented 2026-10-09.
+
+**Outcome Definition, verified by read-through against the source rather than by assertion.**
+- `docs/SECURITY.md` lists all three trust surfaces, and **every** risk row carries both a *Mitigation*
+  and a *Residual*. There are eleven rows, not nine — see below.
+- `README.md` carries the install/use guide, the adapter-authoring section, and links to
+  `docs/SECURITY.md`.
+- No claim presents one layer as two: where a control is a prompt instruction rather than a mechanism,
+  the text says so; and the two unverified hypotheses (H1, H2, plus H4) are named as unverified in their
+  own rows rather than folded into a mitigation.
+- The adapter-authoring steps were checked line by line against `loadSites` in `scripts/policy.js`: the
+  required `urls` keys for each `kind`, the adversarial-suite rejection of a history adapter's `allow`,
+  the `covers`-must-be-loaded rule, and the word-boundary behaviour of `deny` all match the code.
+
+**Two risks added beyond the plan's R1-R9.** The bead asked for R1-R9; these two are real and were already
+recorded in the beads, so writing a threat model that omitted them would have been the dishonest choice:
+
+- **R10 — the PII sanitizer is pattern-based.** The plan mentions this residual (§3.5) but does not list
+  it among R1-R9. Stated plainly: pattern matching is not exhaustive, and the stronger control — the agent
+  instruction never to record personal data — is *also* only an instruction.
+- **R11 — the `tools:` allowlist is unverified.** This is H1, and it is security-relevant, not just a
+  platform detail: if the frontmatter list is not honoured, the guard is the **sole** control and any
+  "two independent layers" framing is false. Given R1 (the guard can fail open) this is arguably the most
+  important row in the document, so it is written as an explicit risk rather than left as a footnote.
+
+**Honesty note — the document deliberately under-claims.** Because the live checks are deferred, R2
+(redirect protection), R9 (matcher coverage) and R11 are all marked **unverified** with pointers to
+`.beads/DS-1/evidence-03.txt` and `evidence-07.txt`. That is the accurate state of the world right now: the
+code exists and is tested, but three of the safety claims rest on platform behaviour nobody has observed
+yet. A threat model that read as if they were confirmed would be worse than no threat model.
+
+**No automated test**, per this bead's Test Specification — prose. Nothing was added that merely asserts
+the files exist.
+
+**Not done here, deliberately:** the plugin was **not** installed. `claude plugin marketplace add ./` edits
+the user's Claude Code configuration, and §4.2 requires that to be offered and done only on the user's
+say-so. The README documents the steps instead.
 
