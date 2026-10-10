@@ -9,7 +9,7 @@ choice is always "stop loudly" or "degrade honestly", never "retry" or "guess".
 ## 1. A full `find-best-deal` run
 
 Entry point: the user invokes `/claude-deal-scout:find-best-deal`. Owner: the **main thread**, which
-orchestrates but never touches Chrome ([SKILL.md](../../skills/find-best-deal/SKILL.md)).
+orchestrates but never touches the browser ([SKILL.md](../../skills/find-best-deal/SKILL.md)).
 
 ```mermaid
 sequenceDiagram
@@ -18,12 +18,12 @@ sequenceDiagram
   participant S as Skill (main thread)
   participant G as guard.js selftest
   participant A as deal-scout subagent
-  participant C as Chrome (user's session)
+  participant C as Browser (granted adapter's session)
   participant R as report.js
 
   U->>S: /find-best-deal + requirement
   S->>G: node guard.js selftest
-  G-->>S: "selftest OK: 38 cases", exit 0
+  G-->>S: "selftest OK: 60 cases", exit 0
   Note over S: stop here if non-zero — do not run the agent
   S->>U: ask only for missing intake fields
   S->>U: "log in to Amazon.in / Flipkart yourself"
@@ -34,15 +34,15 @@ sequenceDiagram
   A->>C: history lookup per candidate (no adapter ships → skipped)
   C-->>A: page text (untrusted)
   A-->>S: one fenced JSON: candidates / gaps / blocked
-  Note over S,A: every Chrome call above passed through guard pre/post
+  Note over S,A: every browser call above passed through guard pre/post
   S->>R: stdin = agent JSON, --requirement '<json>'
   R-->>S: merged report JSON
   S->>U: best product, best deal, table, own lists, history, flags, gaps, blocked
   Note over S,U: "nothing was bought or changed"
 ```
 
-**Failure modes:** an unavailable Claude-in-Chrome tool or a failed selftest stops the run before
-the agent starts. A sign-in wall becomes a `login_required` gap and the run continues public-only. A
+**Failure modes:** an unavailable tool from the granted adapter or a failed selftest stops the run
+before the agent starts. A sign-in wall becomes a `login_required` gap and the run continues public-only. A
 CAPTCHA becomes a `blocked` entry; the agent skips that page and continues — and the **main thread
 must not retry it**. Malformed agent JSON exits 2 and is reported as-is; the skill must not
 hand-edit it into shape, because the validation that follows is also the injection control.
@@ -61,7 +61,7 @@ flowchart TB
   Scope -- no --> Allow["exit 0 — untouched<br/>(ordinary MCP use)"]
   Scope -- yes --> Tool{"checkTool(tool_name, browsers)"}
   Tool -- "not in the registry's allow" --> Block["exit 2<br/>+ reason on stderr"]
-  Tool -- ok --> NeedsUrl{"url-bearing tool<br/>(navigate)?"}
+  Tool -- ok --> NeedsUrl{"url-bearing tool<br/>(per adapter)?"}
   NeedsUrl -- "yes, no url" --> Block
   NeedsUrl -- "no, or url present" --> HasUrl{"url present?"}
   HasUrl -- no --> Allow
@@ -70,29 +70,33 @@ flowchart TB
   Url -- ok --> Allow
 ```
 
-Note the order: the tool is checked first, then the URL. A URL is checked whenever one is present,
-**even on a tool that does not normally carry one** — so `navigate` and a hypothetical `read_page`
-with a `url` are treated alike. Any throw — unparseable stdin, a broken adapter, anything — is
-caught and becomes exit 2 ([:181-184](../../scripts/guard.js#L181-L184)).
+Note the order: the tool is checked first, then the URL. `url_bearing` is per adapter, and the two
+shipped adapters answer differently for the "open a tab" tool (`tabs_create_mcp` no, `new_page` yes)
+— see [api-surface.md](api-surface.md#why-the-two-adapters-disagree-about-url_bearing). A URL is
+checked whenever one is present, **even on a tool that does not normally carry one** — so
+`navigate_page` and a hypothetical `take_snapshot` with a `url` are treated alike. Any throw —
+unparseable stdin, a broken adapter, anything — is caught and becomes exit 2
+([:181-184](../../scripts/guard.js#L181-L184)).
 
 ## 3. Guard `PostToolUse` — the redirect catch
 
-[`evaluatePost`, guard.js:134-165](../../scripts/guard.js#L134-L165). `navigate`'s response echoes
-only the *requested* URL, so the landed URL has to be read from a `tabs_context_mcp` listing.
-`evaluatePost` first gates on the registry's `landing_check` set — it scans a tool's response only
-when the tool is positively identified as landing-checked, which is what keeps a link-dense
-`read_page` response from blocking every read.
+[`evaluatePost`, guard.js:134-165](../../scripts/guard.js#L134-L165). Under Claude in Chrome
+`navigate`'s response echoes only the *requested* URL, so the landed URL has to be read from a
+`tabs_context_mcp` listing; under chrome-devtools both `navigate_page` and `list_pages` return the
+landed URL directly. Either way `evaluatePost` first gates on the registry's `landing_check` set — it
+scans a tool's response only when the tool is positively identified as landing-checked, which is what
+keeps a link-dense page-read (`read_page`, `take_snapshot`) from blocking every read.
 
 ```mermaid
 sequenceDiagram
   participant A as subagent
-  participant N as navigate
+  participant N as navigate / navigate_page
   participant H as guard post
-  participant T as tabs_context_mcp
+  participant T as tabs_context_mcp / list_pages
 
   A->>N: navigate(url)
-  N-->>A: echoes the REQUESTED url only
-  A->>T: tabs_context_mcp (required by the agent prompt)
+  N-->>A: echoes the REQUESTED url only (Claude in Chrome)
+  A->>T: tabs_context_mcp / list_pages (required by the agent prompt)
   T-->>H: response containing the real tab URLs
   H->>H: walk response for http(s):// strings
   alt any host off-allowlist
@@ -102,9 +106,9 @@ sequenceDiagram
   end
 ```
 
-**Residual (R2):** this whole layer depends on the agent actually making the
-`tabs_context_mcp` call, and on the landed URL appearing in a response. It is an after-the-fact
-check, never independent of agent behaviour. See [docs/SECURITY.md](../../docs/SECURITY.md).
+**Residual (R2):** this whole layer depends on the agent actually making the tab-listing call, and on
+the landed URL appearing in a response. It is an after-the-fact check, never independent of agent
+behaviour. See [docs/SECURITY.md](../../docs/SECURITY.md).
 
 ## 4. Registry load & validation (fail closed)
 

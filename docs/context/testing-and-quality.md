@@ -7,18 +7,18 @@
 | Layer | Framework | Location | Evidence |
 |---|---|---|---|
 | unit + integration | `node:test` + `node:assert` (no framework, no mocks, no fixtures library) | `test/*.test.js` | [package.json](../../package.json) `"test": "node --test"` |
-| policy matrix (in-product) | bespoke 38-case matrix inside the shipping script | `node scripts/guard.js selftest` | [SELFTEST_CASES, guard.js:195-252](../../scripts/guard.js#L195-L252) |
-| live browser E2E | **none automated** — manual checklist | [docs/SECURITY.md](../../docs/SECURITY.md) | plan §5.3 |
+| policy matrix (in-product) | bespoke 60-case matrix inside the shipping script | `node scripts/guard.js selftest` | [SELFTEST_CASES, guard.js:195-291](../../scripts/guard.js#L195-L291) |
+| live browser E2E | **none automated** — manual checklist. The guard *has* been driven live against a real MCP server (`chrome-devtools`) in both directions; a full `find-best-deal` run has not | [docs/SECURITY.md](../../docs/SECURITY.md) | plan §5.3 |
 
 ## Coverage
 
-`npm test` → **122 tests, 122 pass, 0 fail**, ~19 s. Verified 2026-10-10 on
+`npm test` → **123 tests, 123 pass, 0 fail**. Verified 2026-10-11 on
 `feat/ds-2-vendor-agnostic-browser-tools`.
 
 | File | Tests | Covers |
 |---|---|---|
 | [test/policy.test.js](../../test/policy.test.js) | 13 | the URL matrix (look-alike hosts, schemes, whitespace/control/backslash, length cap, allow + deny path sets, word-boundary deny semantics, adversarial-suite completeness), `checkTool` both directions (driven off the loaded registry, iterating each adapter's own prefixes), `sourceToBareId` |
-| [test/browser.test.js](../../test/browser.test.js) | 12 | `browsers/*.json`: the shipped registry's `allow` and `landing_check` sets, `tabs_create_mcp` out of `url_bearing`, `url_bearing`/`landing_check ⊆ allow`, cross-file prefix and tool-name uniqueness, duplicate ids, prefix/bare-name shapes, and fail-closed on a missing or empty `browsers/` dir |
+| [test/browser.test.js](../../test/browser.test.js) | 13 | `browsers/*.json`, asserted **per adapter** rather than over the union: each shipped adapter's `allow` set, its `url_bearing` (where the two deliberately disagree), its `landing_check` (and that no page-reading tool is ever in it); a test that the subagent's `tools:` grant names exactly one shipped adapter's allow set; plus `url_bearing`/`landing_check ⊆ allow`, cross-file prefix and tool-name uniqueness, duplicate ids, prefix/bare-name shapes, and fail-closed on a missing or empty `browsers/` dir |
 | [test/guard.test.js](../../test/guard.test.js) | 25 | spawns the **real script** via `child_process.spawnSync`: exit codes for garbage/empty/non-object stdin, unknown mode, broken `sites/` and `browsers/` dirs, scoping to other agents (plus the `DEAL_SCOUT_AGENT_TYPE` seam and the scope-before-load ordering), every dangerous tool bare and MCP-prefixed, URL checks, `navigate` without `url`, the `landing_check` gate, and every `post` behaviour |
 | [test/adapter.test.js](../../test/adapter.test.js) | 10 | every shipped adapter loads; each `urls.*` template satisfies its own policy; overbroad-`allow` history adapter **rejected**; innocent history adapter **not** falsely rejected; unknown `covers` id rejected; empty `covers` rejected; duplicate ids, hostname shape, missing url templates, empty/malformed dir |
 | [test/history.test.js](../../test/history.test.js) | 24 | every rung of the verdict ladder and its boundaries (4% vs 6% above the low, 5%-below and 25%-below cases), the confidence derivation, summary-only and single-year degradation, sparse-data gate, contradictory data, all three invalid-input skips, `analyzeAll` alignment, missing sale-calendar tolerance |
@@ -27,8 +27,9 @@
 
 ### Known gaps (explicit, not accidental)
 
-- **Live Chrome E2E** — real DOM extraction, redirect discard, CAPTCHA stop, and "nothing was
-  bought". Manual checklist only (plan §5.3).
+- **Live browser E2E** — real DOM extraction, redirect discard, CAPTCHA stop, and "nothing was
+  bought". Manual checklist only (plan §5.3). The `chrome-devtools` grant in particular has never
+  been exercised this way: it needs a one-time sign-in in the profile that server launches.
 - **Extraction quality** against the real Amazon.in / Flipkart / history-site DOM. These change
   without notice; the agent is designed to report a gap rather than guess.
 - **Whether the subagent `tools:` allowlist honours MCP names** — checked live once (H1, passed),

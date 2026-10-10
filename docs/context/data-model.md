@@ -118,7 +118,7 @@ absent — `{}` is valid and means "no budget, no conditions, no deadline".
 | Enum | Values | Source |
 |---|---|---|
 | Adapter `kind` | `shop`, `history` | [policy.js:218](../../scripts/policy.js#L218) |
-| Allowed tools | `tabs_context_mcp`, `tabs_create_mcp`, `tabs_close_mcp`, `navigate`, `read_page`, `get_page_text`, `find` | [browsers/claude-in-chrome.json](../../browsers/claude-in-chrome.json) (`allow`) |
+| Allowed tools (per adapter) | `claude-in-chrome`: `tabs_context_mcp`, `tabs_create_mcp`, `tabs_close_mcp`, `navigate`, `read_page`, `get_page_text`, `find` — `chrome-devtools`: `list_pages`, `select_page`, `new_page`, `navigate_page`, `close_page`, `take_snapshot`, `wait_for` | [browsers/](../../browsers) (`allow` in each adapter) |
 | `deny` vocabulary | `add`, `buy`, `checkout`, `signin`, `/ap/`, `/gp/css/`, `payment`, `address`, `order` | [policy.js:29](../../scripts/policy.js#L29) |
 | Offer kinds | `bank`, `coupon`, `exchange` | [score.js:63](../../scripts/score.js#L63) |
 | Flags | `inflated_mrp`, `low_reviews`, `over_budget`, `third_party_seller`, `below_min_rating`, `offer_implausible` | [flagsFor, score.js:242-256](../../scripts/score.js#L242-L256) |

@@ -45,7 +45,8 @@ Terms as **this codebase** uses them. Identifier spellings are exact — grep th
 | **agent_type scoping** | the guard acts only when `agent_type === AGENT_TYPE` (default `"claude-deal-scout:deal-scout"`); everything else is untouched, and the scope is checked *before* either registry loads | [guard.js:32](../../scripts/guard.js#L32), [:176](../../scripts/guard.js#L176) |
 | **fail closed** | on any error, exit **2** — the only blocking exit code | [guard.js:181](../../scripts/guard.js#L181) |
 | **adapter** | a `sites/*.json` file; `kind` is `shop` or `history` | [policy.js:218](../../scripts/policy.js#L218) |
-| **browser registry** | a `browsers/*.json` file: the tool `allow` set, plus which tools are `url_bearing` and which are landing-checked, keyed by the browser server's `prefixes` | [validateBrowsers, policy.js:328](../../scripts/policy.js#L328) |
+| **browser registry** | one `browsers/*.json` file per browser: its tool `allow` set, plus which tools are `url_bearing` and which are landing-checked, keyed by that browser server's `prefixes`. **Two ship** — `claude-in-chrome` and `chrome-devtools` — and the guard allows the union | [validateBrowsers, policy.js:328](../../scripts/policy.js#L328), [browsers/](../../browsers) |
+| **grant vs union** | the `tools:` frontmatter grant picks which browser the subagent *has*; the guard's allow set is the union of every loaded adapter, so it is the more permissive of the two | [security-and-permissions.md](security-and-permissions.md), [test/browser.test.js](../../test/browser.test.js) |
 | **allow / deny** | `allow` = pathname regexes (the control); `deny` = word-boundary tokens (defence in depth) | [site-adapters.md](site-adapters.md) |
 | **covers** | a history adapter's list of shop-adapter ids it can look up; unknown ids are a load error | [policy.js:248](../../scripts/policy.js#L248) |
 | **adversarial path suite** | the 9 mutating paths a history adapter's `allow` regexes are *run against* at load | [ADVERSARIAL_PATHS, policy.js:37](../../scripts/policy.js#L37) |
@@ -54,7 +55,7 @@ Terms as **this codebase** uses them. Identifier spellings are exact — grep th
 | **blocked** | one entry per CAPTCHA/interstitial page — a separate list from `gaps`, so it never competes for the 5-line budget | [deal-scout.md](../../agents/deal-scout.md) step 6 |
 | **sanitizer** | the pattern-based PII scrubber over `title`, `source`, `product_key` | [score.js:96](../../scripts/score.js#L96) |
 | **R-number** | ⚠️ **overloaded**: `R1`–`R10` in plan §2 are *requirements*; `R1`–`R9` in plan §6 and `R1`–`R11` in SECURITY.md are *residual risks* | [conventions.md](conventions.md#comments) |
-| **H-number** | a *hypothesis* the plan wrote down to be checked live. H1 (tools allowlist) passed, H2 (navigate's response carries the final URL) **failed**, H4 (no native-named tools) unverified | plan §2; [docs/SECURITY.md](../../docs/SECURITY.md) |
+| **H-number** | a *hypothesis* the plan wrote down to be checked live. H1 (tools allowlist) passed, **for the `claude-in-chrome` grant only**. H2 (the navigate response carries the final URL) **failed for Claude in Chrome and holds for chrome-devtools** — its `navigate_page` and `list_pages` both embed the landed URL. H4 (no native-named tools) unverified | plan §2; [docs/SECURITY.md](../../docs/SECURITY.md) |
 
 ## Process
 
