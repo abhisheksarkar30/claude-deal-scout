@@ -60,9 +60,11 @@ important residual in this document: if the guard does not run, nothing mechanic
 **Mitigation.** The `post` hook scans the tool response for URLs and blocks the page if any host is
 off-allowlist, telling the agent to discard the page and close the tab. The hook *matches* every MCP tool
 call (`mcp__.*`) but only *scans* the tools the registry marks `landing_check` in `browsers/*.json` —
-currently `navigate` and `tabs_context_mcp`. The distinction is deliberate: `read_page` and
-`get_page_text` return the page itself, which is full of third-party links, so scanning those would block
-every read. The agent is told to call `tabs_context_mcp` after every `navigate`.
+`navigate` and `tabs_context_mcp` for Claude in Chrome, `navigate_page` and `list_pages` for Chrome
+DevTools MCP. The distinction is deliberate: every page-*reading* tool — `read_page`, `get_page_text`,
+`take_snapshot` — returns the page itself, which is full of third-party links, so scanning those would
+block every read. The agent is told to list the open pages after every navigation and check the real
+URL: `tabs_context_mcp` under Claude in Chrome, `list_pages` under Chrome DevTools MCP.
 **Residual.** H2 was live-checked and **failed for `navigate`**: its response only echoes the *requested*
 URL (see `.beads/DS-1/evidence-03.txt`), so a post hook on `navigate` alone sees nothing. The real landing
 URL appears in a `tabs_context_mcp` listing, which is why that tool is in `landing_check` and its response
@@ -146,10 +148,16 @@ first place — which is also only an instruction.
 
 ### R11 — The `tools:` allowlist is unverified
 
-**Mitigation.** The agent's frontmatter lists exactly the seven read-only tools.
-**Residual.** H1 was live-checked and **passed**: the subagent had exactly the seven listed tools, and
-`javascript_tool` / `read_network_requests` did not exist for it (see `.beads/DS-1/evidence-07.txt`). One
-run on one build; re-check after a Claude Code upgrade. The guard's default-deny remains the second layer.
+**Mitigation.** The agent's frontmatter lists exactly the read-only tools of one shipped adapter — seven
+under either one. Today that is `browsers/chrome-devtools.json`. `test/browser.test.js` asserts the grant
+names exactly one shipped adapter's allow set, so the grant and the registry cannot drift apart silently.
+**Residual.** H1 was live-checked and **passed**, but **for the Claude in Chrome grant only**: the
+subagent then had exactly the seven tools listed, and `javascript_tool` / `read_network_requests` did not
+exist for it (see `.beads/DS-1/evidence-07.txt`). That evidence does **not** transfer to the
+chrome-devtools grant, which has not been live-checked — there, `evaluate_script` and the input tools are
+refused by the **guard** and pinned by the selftest matrix, which is a different (and weaker) claim than an
+observed framework grant. One run on one build either way; re-check after a browser swap or a Claude Code
+upgrade. The guard's default-deny remains the second layer.
 
 ## Manual end-to-end checklist
 

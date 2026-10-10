@@ -14,27 +14,77 @@ const BROWSERS_DIR = path.join(__dirname, '..', 'browsers');
 // The shipped registry
 // ---------------------------------------------------------------------------
 
-test('the shipped browser registry allows exactly the seven read-only tools', () => {
+// Asserted per adapter rather than over the union: the two shipped browsers are allowed to
+// overlap in *purpose*, not in tool names (validateBrowsers forbids that), so a union assertion
+// would stop being able to catch a single adapter quietly growing a tool.
+
+test('each shipped browser adapter allows exactly its documented read-only set', () => {
+  const byId = Object.fromEntries(loadBrowsers(BROWSERS_DIR).map((b) => [b.id, b.allow.slice().sort()]));
+  assert.deepEqual(byId, {
+    'claude-in-chrome': [
+      'find', 'get_page_text', 'navigate', 'read_page',
+      'tabs_close_mcp', 'tabs_context_mcp', 'tabs_create_mcp',
+    ],
+    'chrome-devtools': [
+      'close_page', 'list_pages', 'navigate_page', 'new_page',
+      'select_page', 'take_snapshot', 'wait_for',
+    ],
+  });
+});
+
+test('the shipped adapters disagree about url_bearing, and both are right', () => {
+  const byId = Object.fromEntries(loadBrowsers(BROWSERS_DIR).map((b) => [b.id, b.url_bearing.slice().sort()]));
+  // Claude in Chrome's tab opener takes no parameters and opens a blank tab, so there is no url to
+  // check on the call itself. chrome-devtools' new_page takes a url and loads it, so it does.
+  assert.deepEqual(byId, {
+    'claude-in-chrome': ['navigate'],
+    'chrome-devtools': ['navigate_page', 'new_page'],
+  });
+  assert.equal(loadBrowsers(BROWSERS_DIR).some((b) => b.url_bearing.includes('tabs_create_mcp')), false);
+});
+
+test('each shipped adapter landing-checks its navigation tools, never its page reads', () => {
+  // Not the same set as allow: the page-reading tools return the page itself, full of third-party
+  // links, so scanning those responses would block every read. On a live run chrome-devtools'
+  // take_snapshot carried a `url=` attribute on nearly every link, which is exactly that hazard.
   const browsers = loadBrowsers(BROWSERS_DIR);
+  const byId = Object.fromEntries(browsers.map((b) => [b.id, b.landing_check.slice().sort()]));
+  assert.deepEqual(byId, {
+    'claude-in-chrome': ['navigate', 'tabs_context_mcp'],
+    'chrome-devtools': ['list_pages', 'navigate_page'],
+  });
+  for (const b of browsers) {
+    for (const reader of ['read_page', 'get_page_text', 'take_snapshot']) {
+      assert.equal(b.landing_check.includes(reader), false, `${b.id} must not landing-check ${reader}`);
+    }
+  }
+});
+
+test("the subagent's tool grant matches exactly one shipped adapter", () => {
+  // The frontmatter `tools:` list cannot be generated from the registry (it is fixed Markdown), so
+  // it can silently drift. This does not generate it — it makes the drift fail loudly, which is the
+  // part that matters: a grant naming tools no adapter allows would have the guard deny every call
+  // the agent makes, and a grant naming a *different* adapter than the intended one would silently
+  // swap the browser.
+  const md = fs.readFileSync(path.join(__dirname, '..', 'agents', 'deal-scout.md'), 'utf8');
+  const line = md.match(/^tools:\s*(.+)$/m);
+  assert.ok(line, 'agents/deal-scout.md must declare a tools: list');
+
+  const granted = line[1].split(',').map((s) => s.trim()).filter(Boolean);
+  assert.ok(granted.length > 0, 'the tools: list must not be empty');
+
+  const prefixes = new Set(granted.map((t) => t.slice(0, t.lastIndexOf('__') + 2)));
+  assert.equal(prefixes.size, 1, `every granted tool must share one server prefix, got ${[...prefixes]}`);
+
+  const [prefix] = [...prefixes];
+  const adapter = loadBrowsers(BROWSERS_DIR).find((b) => b.prefixes.includes(prefix));
+  assert.ok(adapter, `no shipped browser adapter claims prefix ${prefix}`);
+
   assert.deepEqual(
-    browsers.flatMap((b) => b.allow).sort(),
-    ['find', 'get_page_text', 'navigate', 'read_page', 'tabs_close_mcp', 'tabs_context_mcp', 'tabs_create_mcp'],
+    granted.map((t) => t.slice(prefix.length)).sort(),
+    adapter.allow.slice().sort(),
+    `the grant must name exactly ${adapter.id}'s allowed tools`,
   );
-});
-
-test('the shipped registry keeps tabs_create_mcp out of url_bearing', () => {
-  // It takes no parameters and opens a blank tab, so there is no url to check on the call itself —
-  // the url is checked on the navigate that follows. Pinned because the guard relies on it to
-  // fail closed on a navigate that carries none.
-  const browsers = loadBrowsers(BROWSERS_DIR);
-  assert.equal(browsers.some((b) => b.url_bearing.includes('tabs_create_mcp')), false);
-});
-
-test('the shipped registry landing-checks the navigation tools only', () => {
-  // Not the same set as allow: read_page and get_page_text return the page text itself, which is
-  // full of third-party links, so scanning those responses would block every read.
-  const browsers = loadBrowsers(BROWSERS_DIR);
-  assert.deepEqual(browsers.flatMap((b) => b.landing_check).sort(), ['navigate', 'tabs_context_mcp']);
 });
 
 // ---------------------------------------------------------------------------

@@ -249,6 +249,45 @@ const SELFTEST_CASES = [
   // payload, and a scan's fail-closed direction is to scan, so these two must still block.
   ['deny: post whose tool name does not resolve is still scanned', 'post', { agent_type: AGENT_TYPE, tool_name: 'mcp__unconfigured__read_page', tool_response: { url: 'https://ad.example.com/promo' } }, 0, true],
   ['deny: post carrying no tool name at all is still scanned', 'post', { agent_type: AGENT_TYPE, tool_response: { url: 'https://ad.example.com/promo' } }, 0, true],
+
+  // ---------------------------------------------------------------------------
+  // The second shipped browser: chrome-devtools (browsers/chrome-devtools.json).
+  // test/browser.test.js asserts what each adapter *lists*; these rows are what proves the guard
+  // applies it. The deny block is the load-bearing half — every one of those tools exists on the
+  // server, so a registry typo that dropped one would be an allow, not an error.
+  // ---------------------------------------------------------------------------
+
+  // Allowed reads.
+  ['allow: devtools navigate_page to a product page', 'pre', preCall('navigate_page', 'https://www.amazon.in/dp/B0XXXXXXXX'), 0],
+  ['allow: devtools new_page to a search page', 'pre', preCall('new_page', 'https://www.flipkart.com/search?q=phone'), 0],
+  ['allow: devtools take_snapshot carries no url', 'pre', preCall('take_snapshot'), 0],
+  ['allow: devtools list_pages carries no url', 'pre', preCall('list_pages'), 0],
+  ['allow: devtools select_page carries no url', 'pre', preCall('select_page'), 0],
+  ['allow: devtools close_page carries no url', 'pre', preCall('close_page'), 0],
+  ['allow: devtools wait_for carries no url', 'pre', preCall('wait_for'), 0],
+
+  // Denied tools. All of these are real tools on this server; none of them is read-only.
+  ['deny: devtools evaluate_script (arbitrary page JS)', 'pre', preCall('evaluate_script'), EXIT_BLOCKED],
+  ['deny: devtools click', 'pre', preCall('click'), EXIT_BLOCKED],
+  ['deny: devtools fill_form', 'pre', preCall('fill_form'), EXIT_BLOCKED],
+  ['deny: devtools press_key', 'pre', preCall('press_key'), EXIT_BLOCKED],
+  ['deny: devtools upload_file', 'pre', preCall('upload_file'), EXIT_BLOCKED],
+  ['deny: devtools handle_dialog', 'pre', preCall('handle_dialog'), EXIT_BLOCKED],
+  ['deny: devtools take_screenshot (not in the read set)', 'pre', preCall('take_screenshot'), EXIT_BLOCKED],
+  ['deny: devtools list_network_requests (session data)', 'pre', preCall('list_network_requests'), EXIT_BLOCKED],
+  ['deny: MCP-prefixed devtools evaluate_script', 'pre', preCall('mcp__chrome-devtools__evaluate_script'), EXIT_BLOCKED],
+
+  // url_bearing differs between the two adapters, and both are right: new_page loads the url it is
+  // given, where tabs_create_mcp opens a blank tab.
+  ['deny: devtools new_page without a url', 'pre', preCall('new_page'), EXIT_BLOCKED],
+  ['deny: devtools navigate_page without a url', 'pre', preCall('navigate_page'), EXIT_BLOCKED],
+
+  // Landing check on the devtools set. Both shapes below were read off a live run, not invented.
+  ['allow: devtools post on an allowlisted navigate_page landing', 'post', { agent_type: AGENT_TYPE, tool_name: 'mcp__chrome-devtools__navigate_page', tool_response: { content: [{ type: 'text', text: '## Pages\n1: Amazon.in : phone (https://www.amazon.in/s?k=phone) [selected]' }] } }, 0],
+  ['deny: devtools post on a navigate_page that landed off-allowlist', 'post', { agent_type: AGENT_TYPE, tool_name: 'mcp__chrome-devtools__navigate_page', tool_response: { content: [{ type: 'text', text: '## Pages\n1: Promo (https://ad.example.com/promo) [selected]' }] } }, 0, true],
+  ['deny: devtools post on a list_pages showing a redirected tab', 'post', { agent_type: AGENT_TYPE, tool_name: 'mcp__chrome-devtools__list_pages', tool_response: { content: [{ type: 'text', text: '## Pages\n1: Amazon.in (https://www.amazon.in/s?k=phone) [selected]\n2: Promo (https://ad.example.com/promo)' }] } }, 0, true],
+  // ...and the read that must NOT be scanned, or every product page would block.
+  ['allow: devtools post on a take_snapshot full of off-allowlist links is not scanned', 'post', { agent_type: AGENT_TYPE, tool_name: 'mcp__chrome-devtools__take_snapshot', tool_response: { content: [{ type: 'text', text: 'uid=1_3 link "sponsored" url="https://ad.example.com/promo"' }] } }, 0],
 ];
 
 function selftest(adapters, browsers) {
