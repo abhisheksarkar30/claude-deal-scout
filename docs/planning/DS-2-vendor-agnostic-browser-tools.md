@@ -1,4 +1,4 @@
-<!-- version=7, status=converged -->
+<!-- version=8, status=converged -->
 # DS-2 — claude-deal-scout: make the browser toolset configuration so the plugin stops being vendor-locked
 
 Issue: none (request came from the user in chat: "make this repo model/vendor agnostic. I wont have
@@ -184,14 +184,17 @@ Modified:
   `ALLOWED_TOOLS` and `MCP_PREFIXES`
 - `scripts/guard.js` — load browsers, config-driven URL-bearing and landing checks, `AGENT_TYPE`
   seam, extended selftest matrix (incl. the harness's allow-row block assertion, §3.2)
-- `hooks/hooks.json` — both matchers to `mcp__.*`
+- `hooks/hooks.json` — both matchers to `mcp__.*`, **and** the file's own `description` ([:2](../../hooks/hooks.json#L2)),
+  which claims the guard "never affects ordinary Claude in Chrome use" and becomes false once the
+  matcher is broad — see v8 in the Change History
 - `agents/deal-scout.md` — a pointer to `browsers/`; no change to the tool list
 - `skills/find-best-deal/SKILL.md` — preflight wording: "the configured browser tools", not
   "Claude in Chrome"
 - `README.md` — Requires; new "Model and browser independence" section
 - `docs/SECURITY.md` — the matcher descriptions at [:60](../../docs/SECURITY.md#L60) and [:65](../../docs/SECURITY.md#L65) (R2: the `post` matcher scope and its rationale) and [:119](../../docs/SECURITY.md#L119) (R9: the `PreToolUse` matcher)
 - `test/policy.test.js` — import and iterate the loaded registry
-- `test/guard.test.js` — the new selftest rows and a `DEAL_SCOUT_BROWSERS_DIR` fail-closed case
+- `test/guard.test.js` — the new selftest rows, a `DEAL_SCOUT_BROWSERS_DIR` fail-closed case, the
+  scope-before-load ordering case, and the `DEAL_SCOUT_AGENT_TYPE` scope case (§5.2)
 - `test/report.test.js` — the foreign-cwd spawn (R5)
 - `.claude-plugin/plugin.json` — `version` bump, per [CLAUDE.md](../../CLAUDE.md); once per bead
 
@@ -221,6 +224,7 @@ Modified:
 | A broken or empty `browsers/` dir fails *open* | `test/guard.test.js` mirrors its existing `DEAL_SCOUT_SITES_DIR` cases ([:78-83](../../test/guard.test.js#L78-L83)) with `DEAL_SCOUT_BROWSERS_DIR` |
 | The scope-before-load ordering regresses, so a broken registry blocks every MCP call session-wide instead of just the deal-scout agent | `test/guard.test.js` asserts a broken `DEAL_SCOUT_BROWSERS_DIR` returns exit 2 for the deal-scout agent and exit 0 for another `agent_type` |
 | A malformed adapter is accepted and the run proceeds with a policy that is not what the user thinks | `validateBrowsers` throws; `test/browser.test.js` covers each rejection branch |
+| **The `DEAL_SCOUT_AGENT_TYPE` override silently moves the guard's scope.** §10 calls it the one genuinely new capability here; it decides which agent's tool calls the guard judges at all, so an unnoticed change widens or narrows enforcement. | `test/guard.test.js` spawns the guard with `DEAL_SCOUT_AGENT_TYPE` set and a payload carrying that `agent_type`, asserting the guard now acts (exit 2 for a denied tool) — and that the default scope is untouched when it is unset |
 
 ### 5.2 New tests
 
@@ -236,7 +240,9 @@ Modified:
 - `test/guard.test.js` — the extended selftest rows above, driven through `spawnSync` against the real
   script; a `DEAL_SCOUT_BROWSERS_DIR` case pointing at a fixture registry; and
   `'a broken registry fails closed for the deal-scout agent but leaves another agent_type untouched'`
-  (exit 2 in scope, exit 0 out of scope), which pins the §3.2 load ordering.
+  (exit 2 in scope, exit 0 out of scope), which pins the §3.2 load ordering; and
+  `'DEAL_SCOUT_AGENT_TYPE moves the guard's scope and the default is unchanged when it is unset'`,
+  which pins the §3.3 seam rather than only asserting the default still works.
 - `test/report.test.js` — `'report.js resolves sites and the calendar from its own location, not the cwd'`.
 
 ### 5.3 Not covered by any automated test
@@ -299,15 +305,20 @@ should be PR'd/merged first and DS-2 rebased onto `main`.
 
 | # | Bead | Priority | Depends on | Purpose |
 |---|---|---|---|---|
-| 01 | `config-browsers-registry-and-loader` | P0 | — | `browsers/claude-in-chrome.json`, `validateBrowsers`/`loadBrowsers`, `checkTool(tool, browsers)`, `test/browser.test.js`, re-pointed `test/policy.test.js` |
-| 02 | `guard-config-driven-tool-policy` | P0 | 01 | `guard.js` loads browsers, `url_bearing`/`landing_check` replace the constants, `AGENT_TYPE` seam, `hooks/hooks.json` matchers → `mcp__.*`, extended selftest matrix, `test/guard.test.js` |
-| 03 | `agent-skill-docs-and-independence` | P0 | 02 | agent/SKILL wording, README independence + "swapping the browser" section, `docs/SECURITY.md` matcher descriptions (`:60`/`:65`/`:119`), `test/report.test.js` foreign-cwd spawn, plugin version bump |
+| 01 | `policy-browsers-registry-and-loader` | P0 | — | The tool policy's **source** moves to config: `browsers/claude-in-chrome.json`, `validateBrowsers`/`loadBrowsers`, `checkTool(tool, browsers)`, the two constants removed, `guard.js` loads and passes the registry, `test/browser.test.js`, re-pointed `test/policy.test.js`. **Behaviour-preserving.** |
+| 02 | `guard-config-driven-behaviour` | P0 | 01 | The **enforcement behaviour** changes: `url_bearing`/`landing_check` from config, `AGENT_TYPE` seam, the `run()` scope-before-load reorder preserving `selftest`, both `hooks.json` matchers → `mcp__.*`, the selftest-harness one-liner, extended selftest matrix, `test/guard.test.js` |
+| 03 | `docs-surface-independence-and-swap` | P0 | 02 | agent/SKILL wording, README independence + "swapping the browser" section, `docs/SECURITY.md` matcher descriptions (`:60`/`:65`/`:119`), `test/report.test.js` foreign-cwd spawn |
 
-Three beads: **one configuration seam applied in three layers** (loader → enforcement → surface),
-which is why it is three and not one — each layer is independently testable and 02 cannot be
-verified before 01 exists. No bead is destructive; 02 is the largest and the only one that changes
-runtime behaviour. The dependency graph is a straight line 01 → 02 → 03, so there is no ordering
-ambiguity and no parallelism.
+Re-seamed at Phase 4 from the version beadified (see v8): the original split put the `checkTool` signature change in bead 01 and its only call site (`guard.js:71`) in bead 02, so bead 01's commit alone left `npm test` red and could not satisfy the per-bead "verification passes before commit" rule. Bead 01 now carries the whole contract switch (`policy.js` *and* its one caller) and is behaviour-preserving; bead 02 carries every behaviour change. Each commit is green on its own. The graph is still the straight line 01 → 02 → 03; 02 remains the largest and the only one that changes runtime behaviour.
+
+Three beads: **one configuration seam applied in three layers** — the policy's source (01), its
+enforcement (02) and its surface (03) — which is why it is three and not one: each layer is
+independently testable and 02 cannot be verified before 01 exists. No bead is destructive; 02 is the
+largest and the only one that changes runtime behaviour. The straight line 01 → 02 → 03 now has no
+ordering ambiguity: after the Phase 4 re-seam every bead's commit leaves `npm test` green, which is
+what the per-bead commit rule requires. Split further was considered and rejected — the `AGENT_TYPE`
+one-liner, the R5 test and the `hooks.json` description each belong to the layer that already owns
+their file, and a test-only bead is not a deliverable in this repo.
 
 ## 9. Alternatives considered and rejected
 
@@ -565,3 +576,35 @@ instance, and no missing §11 row rose to a material defect. §1–§10 were re-
 and every load-bearing cite is accurate. **The version is held at 7** — a terminal round makes no
 content change, only the header status flip to `status=converged`. Full record:
 `review/round-7/triage.md` and `review/round-7/changelog.md`.
+
+### v8 (post-convergence amendment, from Phase 3 beadify — not a cross-review round)
+
+Three changes, none of them a design change; the plan was **not** re-reviewed and `status` stays
+`converged`.
+
+- **§8 re-seamed to keep every bead's commit green.** Beadify found that the v7 split broke the
+  per-bead verification rule: br-DS-2-01 changed `checkTool` to `checkTool(tool, browsers)` on
+  [policy.js:71-88](../../scripts/policy.js#L71-L88), whose **only** caller is
+  [guard.js:71](../../scripts/guard.js#L71) — and that call site was br-DS-2-02's. Bead 01 alone
+  therefore threw on every in-scope call, failed closed, and turned
+  [test/guard.test.js:43-47](../../test/guard.test.js#L43-L47) (`selftest exits 0`) red, which meant
+  its commit could not satisfy Phase 5's "verification passes first" rule without a stop-and-ask.
+  Verified against source: `grep -n 'checkTool' scripts/` returns only the definition and that one
+  call. Bead 01 now carries the whole contract switch (the signature, the two removed constants, and
+  the single caller) and is explicitly behaviour-preserving; bead 02 carries every behaviour change.
+  §8's prose now says so, and drops the old claim that the graph had "no ordering ambiguity" — it did,
+  and that is what the re-seam fixed.
+- **§5.1/§5.2 gain the `DEAL_SCOUT_AGENT_TYPE` test.** Beadify flagged, correctly, that §10 calls the
+  override "the one genuinely new capability here" and §5.2 tested nothing about it — §3.3 only
+  asserted the default is unchanged, which is silence about the override itself. A test that sets the
+  var and asserts the guard acts for the new scope, plus that unsetting it restores the default, closes
+  the gap. This is additive to the test list; no §3 design text changes.
+- **The `hooks/hooks.json:2` description edit is now required, not optional.** Beadify noted that the
+  matcher change makes its text ("so this never affects ordinary Claude in Chrome use") false — the
+  guard now spawns for every MCP call and returns `ALLOW` for other scopes. A false claim in the file
+  that documents the security control is the class of thing this repo documents explicitly, so §4.1's
+  bead-02 line and the bead make the reword mandatory rather than a Review Notes choice.
+
+Full bead files: `.beads/DS-2/br-DS-2-01`, `-02`, `-03`. No finding was rejected at this step; the
+re-seam was the only structural change and it is a scope adjustment, not a design reversal — R1–R5 and
+every §3 subsection are untouched.
