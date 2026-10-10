@@ -22,8 +22,8 @@ in source.
   `MIN_POINTS`, `MAX_POINTS`, `BUY_WITHIN_PCT`, `IMPLAUSIBLE_BELOW_PCT`
   ([history.js:17-26](../../scripts/history.js#L17-L26)). `test/score.test.js` asserts the
   plan-pinned defaults of these knobs — changing one is a deliberate act with a test to update.
-- Data files are data, not code: a new site is a new `sites/*.json`, a shifted sale window is an
-  edit to `data/sale-calendar.json`.
+- Data files are data, not code: a new site is a new `sites/*.json`, a new browser is a new
+  `browsers/*.json`, a shifted sale window is an edit to `data/sale-calendar.json`.
 - Naming follows the codebase's own vocabulary — `adapter`, `covers`, `allow`/`deny`, `candidate`,
   `effective_price`, `rating_adj`, `verdict`, `gap`, `blocked`. See [glossary.md](glossary.md).
   Use these exact identifiers when grepping.
@@ -36,18 +36,21 @@ in source.
   partial report ([report.js:86-89](../../scripts/report.js#L86-L89)).
 - **The hook's catch is load-bearing, not decoration.** Exit 2 is what blocks a tool call; every
   other non-zero exit fails open. So `guard.js` wraps everything and converts any error to exit 2
-  ([guard.js:145-149](../../scripts/guard.js#L145-L149), comment at [:12-14](../../scripts/guard.js#L12-L14)).
+  ([guard.js:181-184](../../scripts/guard.js#L181-L184), comment at [:19-21](../../scripts/guard.js#L19-L21)).
 - Validators return **null / a deny object**, never throw, when the caller needs to turn a failure
   into a report field or a block reason (`checkUrl`, `validateCandidate`, `history.validate`).
-  Only `loadSites`/`validateSites` throw, because a bad adapter must stop the run.
+  Only `loadSites`/`validateSites` and `loadBrowsers`/`validateBrowsers` throw, because a bad
+  adapter must stop the run.
 - Malformed input degrades to *no output* rather than a guess: a candidate with no usable `price`
   is dropped; a candidate with an invalid `history` is kept with `history` omitted.
 
 ## Dependency injection / composition
 
 There is no DI container and no framework. Composition is: pass `adapters` in as an argument
-(`score(input, adapters)`), and read environment only at the two documented seams
-(`CLAUDE_PLUGIN_ROOT` for the skill's shell paths, `DEAL_SCOUT_SITES_DIR` for tests). Anything
+(`score(input, adapters)`), and read environment only at the four documented seams
+(`CLAUDE_PLUGIN_ROOT` for the skill's shell paths, `DEAL_SCOUT_SITES_DIR` / `DEAL_SCOUT_BROWSERS_DIR`
+for the two registries, `DEAL_SCOUT_AGENT_TYPE` for the guard's scope — the last three test/portability
+seams). Anything
 else that varies (the clock, the sale calendar, the deadline) is an **option object the caller
 supplies** — `history.analyze(raw, { today, deadline, saleCalendar })` takes `today` precisely so
 "tests never read the clock" ([history.js:143-146](../../scripts/history.js#L143-L146)).
@@ -75,15 +78,17 @@ No logging library, and no `console.*` anywhere in `scripts/`. Deliberate stream
 
 | Stream | Carries |
 |---|---|
-| stdout | the report JSON ([report.js:84](../../scripts/report.js#L84)); the selftest OK line ([guard.js:235](../../scripts/guard.js#L235)); the PostToolUse `{"decision":"block",…}` JSON ([guard.js:118-124](../../scripts/guard.js#L118-L124)) |
-| stderr | every block reason, prefixed `claude-deal-scout guard: ` ([guard.js:43](../../scripts/guard.js#L43)); `report.js` errors; selftest MISS lines |
+| stdout | the report JSON ([report.js:84](../../scripts/report.js#L84)); the selftest OK line ([guard.js:288](../../scripts/guard.js#L288)); the PostToolUse `{"decision":"block",…}` JSON ([guard.js:151-161](../../scripts/guard.js#L151-L161)) |
+| stderr | every block reason, prefixed `claude-deal-scout guard: ` ([guard.js:65](../../scripts/guard.js#L65)); `report.js` errors; selftest MISS lines |
 | exit code | `0` = allow / success, `2` = blocked (the only blocking code) |
 
 ## Testing conventions
 
-- **`node:test` + `node:assert`, one test file per script**: `test/policy.test.js`,
+- **`node:test` + `node:assert`, one test file per concern**: `test/policy.test.js`,
   `test/guard.test.js`, `test/score.test.js`, `test/history.test.js`, `test/report.test.js`,
-  `test/adapter.test.js`. No framework, no fixtures library, no mocks.
+  `test/adapter.test.js`, `test/browser.test.js`. No framework, no fixtures library, no mocks.
+  (`policy.js` owns two of them — `policy.test.js` for the URL policy, `browser.test.js` for the
+  browser registry — because the two registries are deliberately separate concerns.)
 - Test names are **full behavioural sentences**, including the negative case:
   `'a single kind exceeding the price sets offer_implausible and floors effective_price'`,
   `'checkUrl denies hosts that are not exactly an adapter host'`.
@@ -93,7 +98,7 @@ No logging library, and no `console.*` anywhere in `scripts/`. Deliberate stream
 - `test/adapter.test.js` covers any adapter file automatically by reading `sites/` — adding an
   adapter needs no new test.
 - Every guard test is expected to have a **negative control**: remove the defence and the test must
-  fail. The list is plan §5.4 (8 controls, mutation-and-revert).
+  fail. The list is plan §5.4 (10 controls, mutation-and-revert).
 - Run with `npm test` (`node --test`). No coverage tool, no lint config, no formatter config
   exists in the repo.
 

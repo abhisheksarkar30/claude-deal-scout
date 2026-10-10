@@ -7,7 +7,7 @@ contracts passed between the components in one run — and, because nothing is s
 **source of truth is the validators in code**. Change a shape there and every other file in this
 document is wrong.
 
-Four contracts:
+Five contracts:
 
 | Contract | Producer → consumer | Source of truth |
 |---|---|---|
@@ -15,6 +15,7 @@ Four contracts:
 | Candidate object | subagent → `score.js` | [`CANDIDATE_FIELDS`, score.js:44-58](../../scripts/score.js#L44-L58) |
 | `history` sub-object | subagent → `history.js` | [`validate()`, history.js:71-87](../../scripts/history.js#L71-L87) |
 | Site adapter (`sites/*.json`) | author → `loadSites` | [`validateSites`, policy.js:205-280](../../scripts/policy.js#L205-L280) → see [site-adapters.md](site-adapters.md) |
+| Browser registry (`browsers/*.json`) | author (and the guard) → `loadBrowsers` | fields `id`, `label`, `prefixes[]`, `allow[]`, `url_bearing[]`, `landing_check[]`, `notes[]` (`url_bearing` and `landing_check` must be subsets of `allow`); [`validateBrowsers`, policy.js:328-384](../../scripts/policy.js#L328-L384) |
 
 ## Candidate catalogue
 
@@ -117,8 +118,8 @@ absent — `{}` is valid and means "no budget, no conditions, no deadline".
 | Enum | Values | Source |
 |---|---|---|
 | Adapter `kind` | `shop`, `history` | [policy.js:218](../../scripts/policy.js#L218) |
-| Allowed tools | `tabs_context_mcp`, `tabs_create_mcp`, `tabs_close_mcp`, `navigate`, `read_page`, `get_page_text`, `find` | [policy.js:16-24](../../scripts/policy.js#L16-L24) |
-| `deny` vocabulary | `add`, `buy`, `checkout`, `signin`, `/ap/`, `/gp/css/`, `payment`, `address`, `order` | [policy.js:34](../../scripts/policy.js#L34) |
+| Allowed tools | `tabs_context_mcp`, `tabs_create_mcp`, `tabs_close_mcp`, `navigate`, `read_page`, `get_page_text`, `find` | [browsers/claude-in-chrome.json](../../browsers/claude-in-chrome.json) (`allow`) |
+| `deny` vocabulary | `add`, `buy`, `checkout`, `signin`, `/ap/`, `/gp/css/`, `payment`, `address`, `order` | [policy.js:29](../../scripts/policy.js#L29) |
 | Offer kinds | `bank`, `coupon`, `exchange` | [score.js:63](../../scripts/score.js#L63) |
 | Flags | `inflated_mrp`, `low_reviews`, `over_budget`, `third_party_seller`, `below_min_rating`, `offer_implausible` | [flagsFor, score.js:242-256](../../scripts/score.js#L242-L256) |
 | Verdicts | `buy_now`, `wait`, `no_signal` | [history.js:28](../../scripts/history.js#L28) |
@@ -136,6 +137,6 @@ is pinned by tests rather than observed.
 - **Nothing is persisted.** No files, no local storage, no cache. The report exists only in the
   chat transcript. The skill does write the agent's stdout to a temporary file to pipe it into
   `report.js` — that is the only disk write in the flow, and it is transient.
-- Artifacts that *are* version-controlled data: `sites/*.json`, `data/sale-calendar.json`. Both are
-  edited by hand; neither is generated.
+- Artifacts that *are* version-controlled data: `sites/*.json`, `browsers/*.json`,
+  `data/sale-calendar.json`. All three are edited by hand; none is generated.
 - No soft delete, no audit columns, no optimistic locking — there is no store to have them.

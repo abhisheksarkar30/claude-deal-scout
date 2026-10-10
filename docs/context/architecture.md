@@ -25,7 +25,7 @@ Three design commitments drive everything below:
 | Layer | Choice | Version | Evidence |
 |---|---|---|---|
 | Runtime | Node.js, CommonJS (`"type": "commonjs"`, `'use strict'` per file) | "any recent version" — no engines field | [package.json](../../package.json), [README.md](../../README.md) install section |
-| Dependencies | **none** — no `dependencies`, no `devDependencies`; only `node:` builtins (`node:fs`, `node:path`, `node:test`, `node:assert`) | — | [package.json](../../package.json), imports in [policy.js](../../scripts/policy.js#L12-L13) |
+| Dependencies | **none** — no `dependencies`, no `devDependencies`; only `node:` builtins (`node:fs`, `node:path`, `node:test`, `node:assert`) | — | [package.json](../../package.json), imports in [policy.js](../../scripts/policy.js#L13-L14) |
 | Test framework | `node:test` + `node:assert` | — | [package.json](../../package.json), [test/](../../test) |
 | Plugin manifest | Claude Code plugin + marketplace manifests | plugin `0.1.2` | [.claude-plugin/plugin.json](../../.claude-plugin/plugin.json), [marketplace.json](../../.claude-plugin/marketplace.json) |
 | Browser access | Claude in Chrome MCP tools, overlaid onto the user's own logged-in session | — | [agents/deal-scout.md](../../agents/deal-scout.md#L4) |
@@ -60,18 +60,22 @@ the guard is the mechanical one.
 
 | Mode | Event | Matcher | Job |
 |---|---|---|---|
-| `pre` | `PreToolUse` | `mcp__(claude-in-chrome\|Claude_Browser)__.*` | deny a tool outside the read-only set, or a URL that fails policy → exit 2 |
-| `post` | `PostToolUse` | `...__(navigate\|tabs_context_mcp)` | scan the response for URLs; block if any host is off-allowlist (open-redirect catch) |
-| `selftest` | (manual / skill preflight) | — | run the 32-case policy matrix; non-zero on any miss |
+| `pre` | `PreToolUse` | `mcp__.*` | deny a tool outside the configured read-only set, or a URL that fails policy → exit 2 |
+| `post` | `PostToolUse` | `mcp__.*` | scan the response of a landing-checked tool for URLs; block if any host is off-allowlist (open-redirect catch) |
+| `selftest` | (manual / skill preflight) | — | run the 38-case policy matrix; non-zero on any miss |
 
-Scoping is inside the guard, not the matcher: `payload.agent_type !== "claude-deal-scout:deal-scout"`
-returns allow unconditionally ([guard.js:22](../../scripts/guard.js#L22), [:141](../../scripts/guard.js#L141)).
+Scoping is inside the guard, not the matcher: `payload.agent_type !== AGENT_TYPE` (default
+`"claude-deal-scout:deal-scout"`) returns allow unconditionally ([guard.js:32](../../scripts/guard.js#L32),
+[:176](../../scripts/guard.js#L176)) — and the `run()` entry point returns **before either registry is
+loaded**, so a broken `sites/` or `browsers/` cannot block another agent's call now that the matcher
+fires on every MCP tool ([guard.js:315](../../scripts/guard.js#L315)).
 
 ### 4. Policy — the shared, pure decision layer
-[`scripts/policy.js`](../../scripts/policy.js). No I/O beyond reading `sites/*.json`. Exports
-`checkTool`, `checkUrl`, `loadSites`, `validateSites`, `sourceToBareId` and the vocabulary
+[`scripts/policy.js`](../../scripts/policy.js). No I/O beyond reading `sites/*.json` (the URL policy)
+and `browsers/*.json` (which browser tools exist). Exports `checkTool(tool, browsers)`, `checkUrl`,
+`loadSites`, `validateSites`, `loadBrowsers`, `validateBrowsers`, `sourceToBareId` and the vocabulary
 constants. **Both** the hook and the scorer call in here — a mistake in this file is a mistake in
-every layer ([policy.js:8-9](../../scripts/policy.js#L8-L9)).
+every layer ([policy.js:8-10](../../scripts/policy.js#L8-L10)).
 
 ### 5. Scorer / report validator
 [`scripts/score.js`](../../scripts/score.js). Treats the agent's output as hostile data:
@@ -92,18 +96,19 @@ candidate array** (neither feeds the other), and re-joins them on `candidate.ind
 aligned even when validation drops candidates ([report.js:34-50](../../scripts/report.js#L34-L50)).
 
 ### 8. Data
-`sites/*.json` (adapters) and `data/sale-calendar.json` (8 approximate Indian sale windows,
-`{name, months[]}`). Both are data so that a new site or a shifted sale window is a JSON edit.
+`sites/*.json` (site adapters), `browsers/*.json` (browser tool registry) and
+`data/sale-calendar.json` (8 approximate Indian sale windows, `{name, months[]}`). All three are
+data so that a new site, a new browser or a shifted sale window is a JSON edit.
 
 ## Cross-cutting concerns
 
 | Concern | How it works here | Evidence |
 |---|---|---|
-| **Enablement / gating** | Default-deny tool allowlist + per-site path allowlist, both centralized in `policy.js`; consumed by the hook (enforcement) and the scorer (report re-check) | [policy.js:16-24](../../scripts/policy.js#L16-L24), [:110-114](../../scripts/policy.js#L110-L114) |
-| **Failure policy** | **Fail closed.** Any throw, unparseable stdin, or broken adapter → exit 2 (which is what blocks a tool call; every other non-zero exit fails open). `guard.js` catches everything on purpose ([guard.js:145-149](../../scripts/guard.js#L145-L149)) | [docs/SECURITY.md](../../docs/SECURITY.md) R1 |
+| **Enablement / gating** | Default-deny tool allowlist (from `browsers/*.json`) + per-site path allowlist (from `sites/*.json`, matched in `policy.js`); the tool allowlist is consumed by the hook, the path allowlist by both the hook (enforcement) and the scorer (report re-check) | [browsers/claude-in-chrome.json](../../browsers/claude-in-chrome.json), [policy.js:110-114](../../scripts/policy.js#L110-L114) |
+| **Failure policy** | **Fail closed.** Any throw, unparseable stdin, or broken adapter → exit 2 (which is what blocks a tool call; every other non-zero exit fails open). `guard.js` catches everything on purpose ([guard.js:181-184](../../scripts/guard.js#L181-L184), [:323-331](../../scripts/guard.js#L323-L331)) | [docs/SECURITY.md](../../docs/SECURITY.md) R1 |
 | **Error handling** | Plain `Error` with a message naming the file and the problem (`sites/x.json: "allow" must be …`). `report.js` returns exit 2 with a stderr message rather than printing a partial report | [policy.js:165-167](../../scripts/policy.js#L165-L167), [report.js:86-89](../../scripts/report.js#L86-L89) |
-| **Logging / observability** | No logger and no `console.*`. Hooks write the block reason to **stderr**; the PostToolUse decision goes to **stdout** as JSON. `report.js` prints the report to stdout, errors to stderr | [guard.js:42-44](../../scripts/guard.js#L42-L44), [:253-254](../../scripts/guard.js#L253-L254) |
-| **Config** | `CLAUDE_PLUGIN_ROOT` for path resolution in the skill's shell commands; `DEAL_SCOUT_SITES_DIR` overrides the adapter directory, **explicitly a test seam only** | [guard.js:37-38](../../scripts/guard.js#L37-L38), [build-and-run.md](build-and-run.md) |
+| **Logging / observability** | No logger and no `console.*`. Hooks write the block reason to **stderr**; the PostToolUse decision goes to **stdout** as JSON. `report.js` prints the report to stdout, errors to stderr | [guard.js:64-66](../../scripts/guard.js#L64-L66), [:318](../../scripts/guard.js#L318) |
+| **Config** | `CLAUDE_PLUGIN_ROOT` for path resolution in the skill's shell commands; `DEAL_SCOUT_SITES_DIR` / `DEAL_SCOUT_BROWSERS_DIR` override the two registries (**test seams only**); `DEAL_SCOUT_AGENT_TYPE` overrides the scope (a portability seam, not a knob) | [guard.js:32](../../scripts/guard.js#L32), [:56-60](../../scripts/guard.js#L56-L60), [build-and-run.md](build-and-run.md) |
 | **Persistence** | **None.** The plugin writes nothing to disk by design (R9 in plan §2). The only file it touches is the temp file the skill writes from the agent's stdout to feed `report.js` | plan §2 R9, [SKILL.md](../../skills/find-best-deal/SKILL.md) step 4 |
 | **Output trust boundary** | Agent JSON → validated as untrusted data → report; the skill treats the report as data too | [score.js:5-10](../../scripts/score.js#L5-L10) |
 
@@ -149,7 +154,7 @@ flowchart TB
 
 | External thing | Role | Wired in at | If it is unavailable |
 |---|---|---|---|
-| Claude in Chrome MCP tools (`mcp__claude-in-chrome__*` / `mcp__Claude_Browser__*`) | the only way the plugin sees a page | subagent `tools:` frontmatter; hook matchers | skill preflight stops the run and tells the user to install/enable Claude in Chrome |
+| The configured browser's MCP tools (Claude in Chrome by default: `mcp__claude-in-chrome__*` / `mcp__Claude_Browser__*`, per [browsers/claude-in-chrome.json](../../browsers/claude-in-chrome.json)) | the only way the plugin sees a page | subagent `tools:` frontmatter; the `browsers/` registry (the hook matcher is `mcp__.*`) | skill preflight stops the run and tells the user to install/enable the browser the registry names |
 | `www.amazon.in` / `amazon.in`, `www.flipkart.com` / `flipkart.com` | shop adapters | [sites/amazon-in.json](../../sites/amazon-in.json), [sites/flipkart.json](../../sites/flipkart.json) | adapter invalid → guard fails closed (run stops, nothing proceeds) |
 | Price-history sites | `kind: "history"` adapters → `urls.lookup` | **no adapter ships today** | `history` key omitted per candidate, one aggregated gap note, verdict `no_signal` |
 | Node.js binary | runs the hook and the scripts | hook `command` strings, skill preflight | guard selftest preflight fails → skill stops (this is the one failure the hook cannot cover) |

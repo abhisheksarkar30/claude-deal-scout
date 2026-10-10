@@ -15,15 +15,15 @@ JSON payload to the process's **stdin** and reads the **exit code** (and stdout,
 
 | Hook | Matcher | Command | On block |
 |---|---|---|---|
-| `PreToolUse` | `mcp__(claude-in-chrome\|Claude_Browser)__.*` | `node "${CLAUDE_PLUGIN_ROOT}/scripts/guard.js" pre` | **exit 2** (+ reason on stderr) |
-| `PostToolUse` | `mcp__(claude-in-chrome\|Claude_Browser)__(navigate\|tabs_context_mcp)` | `… guard.js post` | exit 0 + stdout `{"decision":"block","reason":"…"}` |
+| `PreToolUse` | `mcp__.*` | `node "${CLAUDE_PLUGIN_ROOT}/scripts/guard.js" pre` | **exit 2** (+ reason on stderr) |
+| `PostToolUse` | `mcp__.*` | `… guard.js post` | exit 0 + stdout `{"decision":"block","reason":"…"}` |
 
 ### Payload fields the guard reads
 
 | Field | Used by | Notes |
 |---|---|---|
-| `agent_type` | both | **scope gate.** Anything other than `"claude-deal-scout:deal-scout"` → allow, unconditionally ([guard.js:141](../../scripts/guard.js#L141)) |
-| `tool_name` | `pre` | bare or MCP-prefixed; `checkTool` strips a known prefix |
+| `agent_type` | both | **scope gate.** Anything other than `"claude-deal-scout:deal-scout"` → allow, unconditionally ([guard.js:176](../../scripts/guard.js#L176); `run()` returns before either registry is loaded, [:315](../../scripts/guard.js#L315)) |
+| `tool_name` | `pre` | bare or MCP-prefixed; `checkTool(tool, browsers)` strips a configured prefix |
 | `tool_input.url` | `pre` | checked with `checkUrl` when present, **and required** for `navigate` (missing → exit 2, fail closed) |
 | `tool_response` (fallback `tool_result`) | `post` | walked for `http(s)://…` strings, depth ≤ 20, first 50 only |
 
@@ -32,16 +32,16 @@ JSON payload to the process's **stdin** and reads the **exit code** (and stdout,
 | Code | Meaning |
 |---|---|
 | `0` | allow |
-| `2` | **block.** This is the only blocking code — every other non-zero exit fails **open**, which is why every error path is converted to 2 ([guard.js:145-149](../../scripts/guard.js#L145-L149)) |
+| `2` | **block.** This is the only blocking code — every other non-zero exit fails **open**, which is why every error path is converted to 2 ([guard.js:181-184](../../scripts/guard.js#L181-L184)) |
 
-`selftest` is not a hook mode; it is the 32-case matrix run by hand and by the skill's preflight,
-printing `selftest OK: 32 cases` and exiting 0.
+`selftest` is not a hook mode; it is the 38-case matrix run by hand and by the skill's preflight,
+printing `selftest OK: 38 cases` and exiting 0.
 
-### Why `tabs_create_mcp` is not in `URL_BEARING_TOOLS`
+### Why `tabs_create_mcp` is not in the registry's `url_bearing`
 
 It takes no parameters, so it opens a blank tab and the URL is checked on the `navigate` that
 follows. `navigate` **without** a `url` is a contract violation and blocks
-([guard.js:24-31](../../scripts/guard.js#L24-L31)).
+([guard.js:102-104](../../scripts/guard.js#L102-L104)).
 
 ## CLI entry points
 
@@ -52,7 +52,7 @@ and no `--help`.
 |---|---|---|---|
 | `node scripts/guard.js pre` | hook payload JSON | — (reason on stderr when blocking) | 0 / 2 |
 | `node scripts/guard.js post` | hook payload JSON | `{"decision":"block","reason":…}` when blocking, else nothing | 0 |
-| `node scripts/guard.js selftest` | — | `selftest OK: 32 cases` | 0 ok / 1 on any miss / 2 on a load or payload error |
+| `node scripts/guard.js selftest` | — | `selftest OK: 38 cases` | 0 ok / 1 on any miss / 2 on a load or payload error |
 | `node scripts/report.js [--requirement <json>]` | agent JSON | merged report JSON (2-space indented) | 0 / 2 |
 
 - `report.js --requirement` takes **one JSON object as the next argv element**
@@ -67,13 +67,13 @@ and no `--help`.
 
 | Module | Exports | Consumed by |
 |---|---|---|
-| [policy.js](../../scripts/policy.js#L300-L310) | `ALLOWED_TOOLS`, `DENY_VOCABULARY`, `ADVERSARIAL_PATHS`, `MAX_URL_LENGTH`, `checkTool`, `checkUrl`, `loadSites`, `validateSites`, `sourceToBareId` | `guard.js`, `score.js`, `report.js`, tests |
+| [policy.js](../../scripts/policy.js#L404-L415) | `DENY_VOCABULARY`, `ADVERSARIAL_PATHS`, `MAX_URL_LENGTH`, `checkTool`, `checkUrl`, `loadSites`, `validateSites`, `loadBrowsers`, `validateBrowsers`, `sourceToBareId` | `guard.js`, `score.js`, `report.js`, tests |
 | [score.js](../../scripts/score.js#L388-L407) | the tunable knobs (`W_PRICE`, `W_RATING`, `MIN_RATING`, `PRIOR_MEAN`, `PRIOR_N`, `INFLATED_MRP_PCT`, `MIN_REVIEWS`, `MAX_STRING_LENGTH`, `MAX_NUMBER`), `CANDIDATE_FIELDS`, `OFFER_KINDS`, `REDACTED`, `score`, `sanitize`, `applyOffers`, `adjustedRating`, `passesMustHaves`, `validateCandidate` | `report.js`, tests |
 | [history.js](../../scripts/history.js#L296-L307) | `MIN_POINTS`, `MAX_POINTS`, `BUY_WITHIN_PCT`, `IMPLAUSIBLE_BELOW_PCT`, `VERDICTS`, `CONFIDENCES`, `CAVEAT`, `analyze`, `analyzeAll`, `loadSaleCalendar` | `report.js`, tests |
 | [report.js](../../scripts/report.js#L94) | `buildReport` | tests |
 
 `guard.js` exports nothing and runs on import — it is a script, not a module
-([guard.js:268](../../scripts/guard.js#L268)). `report.js` guards its own entry with
+([guard.js:333](../../scripts/guard.js#L333)). `report.js` guards its own entry with
 `require.main === module`, so importing it does not execute.
 
 ## Agent ↔ skill contract
@@ -93,7 +93,9 @@ The `requirement` is **not** in that JSON — the skill holds it and passes it t
 
 The subagent's own tool surface is a contract too: frontmatter `tools:` lists exactly seven
 read-only Chrome tools, and `read_network_requests` is deliberately excluded because request data
-can carry session headers ([policy.js:15-24](../../scripts/policy.js#L15-L24)).
+can carry session headers. That frontmatter is hand-written; *which browser server and tool names
+exist* is configuration, in [`browsers/claude-in-chrome.json`](../../browsers/claude-in-chrome.json),
+and the guard enforces that registry ([validateBrowsers, policy.js:328-384](../../scripts/policy.js#L328-L384)).
 
 ## Scheduled / async triggers
 

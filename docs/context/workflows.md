@@ -23,7 +23,7 @@ sequenceDiagram
 
   U->>S: /find-best-deal + requirement
   S->>G: node guard.js selftest
-  G-->>S: "selftest OK: 32 cases", exit 0
+  G-->>S: "selftest OK: 38 cases", exit 0
   Note over S: stop here if non-zero — do not run the agent
   S->>U: ask only for missing intake fields
   S->>U: "log in to Amazon.in / Flipkart yourself"
@@ -52,15 +52,15 @@ and the same requirement always produce byte-identical report JSON.
 
 ## 2. Guard `PreToolUse` — the enforcement path
 
-[`evaluatePre`, guard.js:69-88](../../scripts/guard.js#L69-L88). Runs before *every* Chrome tool
+[`evaluatePre`, guard.js:91-112](../../scripts/guard.js#L91-L112). Runs before *every* browser tool
 call the subagent attempts.
 
 ```mermaid
 flowchart TB
   P["hook payload on stdin"] --> Scope{"agent_type ==<br/>claude-deal-scout:deal-scout?"}
-  Scope -- no --> Allow["exit 0 — untouched<br/>(ordinary Chrome use)"]
-  Scope -- yes --> Tool{"checkTool(tool_name)"}
-  Tool -- "not in the 7" --> Block["exit 2<br/>+ reason on stderr"]
+  Scope -- no --> Allow["exit 0 — untouched<br/>(ordinary MCP use)"]
+  Scope -- yes --> Tool{"checkTool(tool_name, browsers)"}
+  Tool -- "not in the registry's allow" --> Block["exit 2<br/>+ reason on stderr"]
   Tool -- ok --> NeedsUrl{"url-bearing tool<br/>(navigate)?"}
   NeedsUrl -- "yes, no url" --> Block
   NeedsUrl -- "no, or url present" --> HasUrl{"url present?"}
@@ -73,13 +73,15 @@ flowchart TB
 Note the order: the tool is checked first, then the URL. A URL is checked whenever one is present,
 **even on a tool that does not normally carry one** — so `navigate` and a hypothetical `read_page`
 with a `url` are treated alike. Any throw — unparseable stdin, a broken adapter, anything — is
-caught and becomes exit 2 ([:145-149](../../scripts/guard.js#L145-L149)).
+caught and becomes exit 2 ([:181-184](../../scripts/guard.js#L181-L184)).
 
 ## 3. Guard `PostToolUse` — the redirect catch
 
-[`evaluatePost`, guard.js:110-130](../../scripts/guard.js#L110-L130). `navigate`'s response echoes
-only the *requested* URL, so the landed URL has to be read from a `tabs_context_mcp` listing — which
-is why the hook matcher covers both tools.
+[`evaluatePost`, guard.js:134-165](../../scripts/guard.js#L134-L165). `navigate`'s response echoes
+only the *requested* URL, so the landed URL has to be read from a `tabs_context_mcp` listing.
+`evaluatePost` first gates on the registry's `landing_check` set — it scans a tool's response only
+when the tool is positively identified as landing-checked, which is what keeps a link-dense
+`read_page` response from blocking every read.
 
 ```mermaid
 sequenceDiagram
@@ -104,25 +106,29 @@ sequenceDiagram
 `tabs_context_mcp` call, and on the landed URL appearing in a response. It is an after-the-fact
 check, never independent of agent behaviour. See [docs/SECURITY.md](../../docs/SECURITY.md).
 
-## 4. Adapter load & validation (fail closed)
+## 4. Registry load & validation (fail closed)
 
-Runs at the top of **every** guard invocation and every `report.js` run
-([guard.js:245](../../scripts/guard.js#L245), [report.js:82](../../scripts/report.js#L82)).
+Runs on every `report.js` run (`sites/` only) and on every **in-scope** guard invocation (both
+`sites/` and `browsers/`). The guard loads the registries only *after* the `agent_type` scope check,
+so an out-of-scope MCP call never touches one
+([guard.js:315-317](../../scripts/guard.js#L315-L317), [report.js:82](../../scripts/report.js#L82)).
 
 ```mermaid
 flowchart LR
-  D["sites/*.json sorted"] --> J["JSON.parse"]
+  D["sites/*.json + browsers/*.json sorted"] --> J["JSON.parse"]
   J -- invalid JSON --> X["throw → exit 2"]
-  J --> V["validateSites<br/>per-adapter schema"]
+  J --> V["validateSites / validateBrowsers<br/>per-adapter schema"]
   V -- fails --> X
-  V --> S["whole-set checks:<br/>covers ids exist,<br/>history allow vs adversarial paths"]
+  V --> S["whole-set checks:<br/>covers ids exist,<br/>history allow vs adversarial paths,<br/>unique prefix + tool per browser"]
   S -- fails --> X
   S --> OK["adapters in load order"]
 ```
 
 This is the plugin's fail-closed posture in one picture: **a bad adapter stops the run** rather than
 proceeding with a policy you did not intend. If the plugin suddenly refuses everything after a
-`sites/` edit, the adapter is the first suspect. Details in [site-adapters.md](site-adapters.md).
+`sites/` or `browsers/` edit, the adapter is the first suspect. Details in
+[site-adapters.md](site-adapters.md); the browser registry's own checks are at
+[policy.js:328-384](../../scripts/policy.js#L328-L384).
 
 ## 5. Report pipeline — validate, rank, history, merge
 

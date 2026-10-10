@@ -11,10 +11,10 @@ compile phase, and no dependencies to install. "Build" here means *run the tests
 |---|---|---|
 | Install dependencies | *none — do not run `npm install`* | [CLAUDE.md](../../CLAUDE.md), [package.json](../../package.json) (no `dependencies`) |
 | Build | *none* | — |
-| Test (all) | `npm test` (= `node --test`, 103 tests across 6 files) | [package.json:9](../../package.json#L9) |
+| Test (all) | `npm test` (= `node --test`, 122 tests across 7 files) | [package.json:9](../../package.json#L9) |
 | Test (single file) | `node --test test/history.test.js` | `node:test` CLI |
 | Test (single case) | `node --test --test-name-pattern="point-count gate" test/history.test.js` | `node:test` CLI |
-| Guard policy matrix | `node scripts/guard.js selftest` → must print `selftest OK: 32 cases` and exit 0 | [guard.js:206-237](../../scripts/guard.js#L206-L237) |
+| Guard policy matrix | `node scripts/guard.js selftest` → must print `selftest OK: 38 cases` and exit 0 | [guard.js:254-290](../../scripts/guard.js#L254-L290) |
 | Lint / format / type-check | *none configured* | see [conventions.md](conventions.md#formatting--lint) |
 | Run the feature | install the plugin (below), then `/claude-deal-scout:find-best-deal` | [skills/find-best-deal/SKILL.md](../../skills/find-best-deal/SKILL.md) |
 | Deploy | *none — the "deploy" is installing the plugin into Claude Code* | — |
@@ -56,7 +56,7 @@ node scripts/report.js --requirement '{"budget":50000,"eligible_conditions":["hd
 ```bash
 node scripts/guard.js pre       # reads a hook payload on stdin; exit 0 allow, 2 block
 node scripts/guard.js post      # reads a hook payload; prints {"decision":"block",…} to block
-node scripts/guard.js selftest  # 32-case matrix
+node scripts/guard.js selftest  # 38-case matrix
 ```
 
 `pre`/`post` exit 0 and do nothing when `agent_type` is anything but
@@ -75,7 +75,9 @@ has no credentials of any kind, by design.
 | Name | Purpose | Required in |
 |---|---|---|
 | `CLAUDE_PLUGIN_ROOT` | absolute path to the installed plugin, used in the skill's shell commands and in `hooks/hooks.json` command strings | Claude Code sets it for plugin hooks and skills |
-| `DEAL_SCOUT_SITES_DIR` | overrides the adapter directory | **test seam only** ([guard.js:37-38](../../scripts/guard.js#L37-L38)); never set in production |
+| `DEAL_SCOUT_SITES_DIR` | overrides the site-adapter directory (`sites/`) | **test seam only** ([guard.js:57](../../scripts/guard.js#L57)); never set in production |
+| `DEAL_SCOUT_BROWSERS_DIR` | overrides the browser-registry directory (`browsers/`) | **test seam only** ([guard.js:60](../../scripts/guard.js#L60)); never set in production |
+| `DEAL_SCOUT_AGENT_TYPE` | overrides the `agent_type` the guard scopes to (default `claude-deal-scout:deal-scout`) | portability seam, not a knob ([guard.js:32](../../scripts/guard.js#L32)) |
 
 ## Local dev setup
 

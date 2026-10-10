@@ -22,11 +22,15 @@ the user's existing Chrome session and never handles credentials. "Permissions" 
 allowlists:
 
 ### Tool allowlist (default deny)
-[`ALLOWED_TOOLS`, policy.js:16-24](../../scripts/policy.js#L16-L24) — exactly seven read-only tools.
-Anything else the hook matcher catches is denied, including `computer`, `form_input`,
-`javascript_tool`, `file_upload`, `upload_image`, `gif_creator`, `read_console_messages`, and
-`read_network_requests`. `read_network_requests` is excluded specifically because request data can
-carry session headers. Each is denied bare **and** MCP-prefixed.
+[`browsers/claude-in-chrome.json`](../../browsers/claude-in-chrome.json) (`allow`) — exactly seven
+read-only tools, validated and loaded by
+[`validateBrowsers` / `loadBrowsers`, policy.js:328-402](../../scripts/policy.js#L328-L402). The hook
+matcher is now `mcp__.*` (every MCP tool call, so no vendor's server name is enumerated here), and
+anything not in the loaded registry is denied: `computer`, `form_input`, `javascript_tool`,
+`file_upload`, `upload_image`, `gif_creator`, `read_console_messages`, and `read_network_requests`.
+`read_network_requests` is excluded specifically because request data can carry session headers.
+Each is denied bare **and** under a configured prefix; a name under an *unconfigured* server prefix
+(`mcp__some-other-server__navigate`) is denied too, by the `includes('__')` guard in `checkTool`.
 
 ### Path allowlist (per site, control not denylist)
 `checkUrl` requires: https only, no userinfo, no port other than 443/empty, no trailing-dot host,
@@ -52,7 +56,7 @@ Some controls are verified, some are not. Do not describe an unverified one as v
 | Guard leaves other agents' Chrome use alone | ✅ | [test/guard.test.js](../../test/guard.test.js) |
 | `history` adapter overbroad-allow rejection | ✅ | [test/adapter.test.js:78-99](../../test/adapter.test.js#L78-L99) |
 | Subagent `tools:` allowlist is honoured (H1) | ✅ **live-checked, passed** — the subagent had exactly the seven tools; `javascript_tool` / `read_network_requests` did not exist for it. One run on one build; **re-check after a Claude Code upgrade** | [evidence-07.txt](../../.beads/DS-1/evidence-07.txt), SECURITY.md R11 |
-| `navigate`'s response contains the final URL (H2) | ❌ **live-checked, FAILED** — it echoes only the *requested* URL, which is why the post hook also matches `tabs_context_mcp` | [evidence-03.txt](../../.beads/DS-1/evidence-03.txt), SECURITY.md R2 |
+| `navigate`'s response contains the final URL (H2) | ❌ **live-checked, FAILED** — it echoes only the *requested* URL, which is why the post hook landing-checks `tabs_context_mcp` too (the registry's `landing_check` set), not just `navigate` | [evidence-03.txt](../../.beads/DS-1/evidence-03.txt), [browsers/claude-in-chrome.json](../../browsers/claude-in-chrome.json), SECURITY.md R2 |
 | No dangerous tool is exposed under a non-MCP name (H4) | ❓ **UNVERIFIED** — if one is, the hook matcher never fires for it: a *silent* gap, worse than a fail-open | SECURITY.md R9 |
 | Live end-to-end behaviour on real pages | ❌ not covered by any automated test; manual checklist only | [SECURITY.md](../../docs/SECURITY.md) "Manual end-to-end checklist" |
 

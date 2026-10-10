@@ -1,4 +1,4 @@
-<!-- version=8, status=converged -->
+<!-- version=9, status=converged -->
 # DS-2 — claude-deal-scout: make the browser toolset configuration so the plugin stops being vendor-locked
 
 Issue: none (request came from the user in chat: "make this repo model/vendor agnostic. I wont have
@@ -466,6 +466,15 @@ beads.
   still be reconciled by the context-refresh phase. This closes the count/enumeration class by
   construction: every such line is covered here, so no further per-line sweep is required.
 
+> **Corrected at v9 — this catch-all was too strong, and the reason is instructive.** It boasted that
+> the *enumeration* class was closed "by construction", but the class that actually dominated the
+> refresh was one it never named: **`file:line` cite drift**. `guard.js` and `policy.js` both grew
+> substantially (the guard gained ~130 lines), so *every* cite pointing below the edits in either file
+> became wrong — roughly 136 of them across the doc set — and none of them is an "enumeration" in the
+> sense this note meant. A completeness claim about a *class* is only as good as the list of classes
+> behind it; "by construction" was doing work the list had not earned. The refresh swept the drift
+> class directly and re-verified each cite against source. See v9.
+
 ## Change History
 
 ### v1 (draft)
@@ -608,3 +617,20 @@ Three changes, none of them a design change; the plan was **not** re-reviewed an
 Full bead files: `.beads/DS-2/br-DS-2-01`, `-02`, `-03`. No finding was rejected at this step; the
 re-seam was the only structural change and it is a scope adjustment, not a design reversal — R1–R5 and
 every §3 subsection are untouched.
+
+### v9 (post-implementation, from Phase 5.6 context refresh — not a cross-review round)
+
+One change: §11's catch-all is corrected in place. It claimed the staleness class was closed "by
+construction", but the class that dominated the refresh was one it never listed — **`file:line` cite
+drift**. `guard.js` and `policy.js` both grew, so every cite below the edits in either file went stale;
+the refresh swept ~136 of them across the ten module docs and re-verified each against source.
+`docs/SECURITY.md` rows were out of the refresh's scope and had already been handled by br-DS-2-03.
+Also corrected: §11 predicted the second negative control flips one test, but br-DS-2-01 recorded it
+flipping **two** (one loop covers both `url_bearing` and `landing_check`), so
+`testing-and-quality.md`'s "each flipping exactly one test" was amended with the deviation noted.
+
+`status` stays `converged` — §1–§10 are untouched, and both changes are corrections to §11's own
+bookkeeping rather than design changes. No module was added or retired by the refresh
+(`browsers/*.json` is a second config registry, not a new module: its facts already have owning
+modules, so it appears as an `INDEX.md` row, a `data-model` contract, and the tool-allowlist in the
+security and architecture docs).

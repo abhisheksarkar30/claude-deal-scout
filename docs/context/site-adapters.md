@@ -7,7 +7,7 @@ is the plugin's main extension point: **adding a site is adding a file, never a 
 prose version for a human author is [README.md § Adding a site](../../README.md); this is the
 agent-facing, code-accurate version.
 
-Source of truth: [`loadSites` / `validateSites`, policy.js:191-298](../../scripts/policy.js#L191-L298).
+Source of truth: [`loadSites` / `validateSites`, policy.js:205-298](../../scripts/policy.js#L205-L298).
 A `sites/*.json` file that fails any rule makes the guard **fail closed** — the run stops rather
 than proceeding with a policy that is not what you think it is.
 
@@ -17,11 +17,11 @@ than proceeding with a policy that is not what you think it is.
 |---|---|---|
 | Location | `sites/*.json`, read by `loadSites(dir)`; only files ending `.json` are read | [policy.js:284](../../scripts/policy.js#L284) |
 | Order | filenames sorted before load (deterministic) | [policy.js:284](../../scripts/policy.js#L284) |
-| Directory override | `DEAL_SCOUT_SITES_DIR` — **test seam only** | [guard.js:37-38](../../scripts/guard.js#L38) |
+| Directory override | `DEAL_SCOUT_SITES_DIR` — **test seam only** | [guard.js:57](../../scripts/guard.js#L57) |
 | Empty/malformed dir | throws → guard exits 2 | [policy.js:285](../../scripts/policy.js#L285), [test/adapter.test.js](../../test/adapter.test.js) |
 | Duplicate `id` | rejected, naming both files | [policy.js:217](../../scripts/policy.js#L217) |
 | Host claimed by 2 adapters | first matching adapter in load order wins | [policy.js:153](../../scripts/policy.js#L153) |
-| Consumed by | `guard.js pre`/`post` (enforcement) **and** `score.js` (re-validates every URL in the report) | [guard.js:245](../../scripts/guard.js#L245), [score.js:184](../../scripts/score.js#L184) |
+| Consumed by | `guard.js pre`/`post` (enforcement) **and** `score.js` (re-validates every URL in the report) | [guard.js:317](../../scripts/guard.js#L317), [score.js:184](../../scripts/score.js#L184) |
 
 ## Adapter schema
 
@@ -72,7 +72,7 @@ So: `allow` is the control; `deny` is defence in depth. An unknown path is denie
 - Tokens are matched against the **pathname** at a word boundary `(?![A-Za-z0-9_-])`, so `add`
   catches `/gp/cart/add.html` but not `/product/address-guide`. A token ending in `/` (e.g. `/ap/`)
   carries its own boundary and is matched verbatim ([denyPattern, policy.js:103-106](../../scripts/policy.js#L103-L106)).
-- The canonical vocabulary is [`DENY_VOCABULARY`](../../scripts/policy.js#L34):
+- The canonical vocabulary is [`DENY_VOCABULARY`](../../scripts/policy.js#L29):
   `add`, `buy`, `checkout`, `signin`, `/ap/`, `/gp/css/`, `payment`, `address`, `order`.
 - A token **not** in the vocabulary is still accepted — a boundary-anchored regex is compiled on
   the fly for it. The vocabulary list exists to drive the adversarial suite, not to restrict authors.
@@ -82,7 +82,7 @@ So: `allow` is the control; `deny` is defence in depth. An unknown path is denie
 [policy.js:247-260](../../scripts/policy.js#L247-L260).
 
 1. **No account or mutation paths.** Every `allow` regex is **run against**
-   [`ADVERSARIAL_PATHS`](../../scripts/policy.js#L42-L52) (`/add`, `/buy/confirm`, `/checkout`,
+   [`ADVERSARIAL_PATHS`](../../scripts/policy.js#L37-L47) (`/add`, `/buy/confirm`, `/checkout`,
    `/signin`, `/ap/signin`, `/gp/css/order`, `/payment/result`, `/address/select`,
    `/order/details`). If any matches, the adapter is rejected. This is behavioural, not
    source inspection — an innocent pattern is not rejected merely for containing a word like
