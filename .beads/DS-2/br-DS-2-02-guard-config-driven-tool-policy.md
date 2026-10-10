@@ -268,3 +268,60 @@ genuinely distinct from `allow`; the `run()` reorder preserves fail-closed on `p
 `selftest` path; the harness change is compatible with every row; §4.2's files are untouched; and
 removing `ALLOWED_TOOLS`/`MCP_PREFIXES` did not weaken the suite, since `test/policy.test.js` now
 iterates the loaded registry per-adapter.
+
+### Live harness verification — the `mcp__.*` matcher (was the one unverified item)
+
+Every other section of this bead, and the PR, left one thing explicitly unproven: whether the
+harness actually invokes the guard through the widened matcher. That has now been checked against a
+real Claude Code session (2.1.287), not the in-product selftest.
+
+**How the browser MCP was obtained.** Claude in Chrome is *not* an MCP server that `claude mcp add`
+installs. It is built into the `claude` binary under the server name `claude-in-chrome`, enabled with
+`--chrome` / `/chrome`, and it requires the Claude in Chrome browser extension connected to a running
+Chrome — which cannot be installed non-interactively. Since the matcher is namespace-level (`mcp__.*`
+matches a tool *name* and has nothing to do with what the server serves), the matcher was tested with
+a purpose-built stdio MCP server (`probe`, one tool `ping`), which exercises the identical code path.
+
+**Runtime root.** Hooks for this plugin are read from the **source checkout**, not the plugin cache:
+the debug log records `Read hooks.json for plugin claude-deal-scout (enabled=true):
+D:\github\claude-deal-scout\hooks\hooks.json`, and the block message names
+`D:\github\claude-deal-scout/scripts/guard.js`. For a `directory`-source marketplace the version bump
+plus `claude plugin update` is therefore not what makes the new matcher live — the harness reads the
+working tree. (The bump still matters for the *cache* copy; it is simply not the path used here.)
+
+**Three rows, all observed live:**
+
+| Case | Setup | Observed |
+|---|---|---|
+| in scope, denied | subagent call, `DEAL_SCOUT_AGENT_TYPE=probeagent`, registry does not configure the server | **blocked** — `claude-deal-scout guard: "mcp__probe__ping" is not a configured browser tool`; the tool never ran |
+| in scope, allowed | same, registry configures prefix `mcp__probe__` + tool `ping` | allowed; the call returned `pong` |
+| out of scope | same env, main-thread call | allowed; the call returned `pong` |
+
+The first row is the one that matters: exit 2, delivered by the real guard, triggered by the real
+`mcp__.*` matcher, on a real MCP tool call.
+
+**Payload shape, observed rather than inferred.** A main-thread `PreToolUse` payload carries **no
+`agent_type` key at all** — top-level keys are `cwd`, `effort`, `hook_event_name`, `mcp_server`,
+`permission_mode`, `prompt_id`, `session_id`, `tool_input`, `tool_name`, `tool_use_id`,
+`transcript_path`. A subagent call adds `agent_id` and `agent_type`. So for ordinary use the scope
+gate compares `undefined !== 'claude-deal-scout:deal-scout'`, i.e. out of scope and allowed — which is
+row 3, the intended behaviour. A project-defined agent reports its **bare** name (`probeagent`); the
+namespaced `plugin:agent` form is still assumed for plugin agents rather than observed.
+
+**Six harness-known browser prefixes, two shipped.** The binary names the server prefixes the harness
+itself recognises: `mcp__claude-in-chrome__`, `mcp__Claude_Browser__`, `mcp__Claude_in_Chrome__`,
+`mcp__Claude_Preview__`, `mcp__remote-devices__claude-in-chrome__`, `mcp__remote-devices__Claude_Browser__`,
+`mcp__remote-devices__Claude_in_Chrome__`. The shipped registry claims two of them. That is safe — the
+others are denied, not silently allowed — but a user whose Chrome tools arrive under a
+`remote-devices` prefix would see every call blocked until that prefix is added. Fail-closed, and worth
+knowing before someone reads a block as a broken install.
+
+**Residual, stated plainly.** This proves the matcher and the guard; it does not run against Claude in
+Chrome itself. No browser extension was installed, so no real `mcp__claude-in-chrome__*` tool was ever
+bound, and the allow row used a fixture server rather than Chrome. `landing_check` on a real
+`navigate` / `tabs_context_mcp` response remains covered only by the selftest and `test/guard.test.js`.
+
+**One design note the payload exposes.** `mcp_server` arrives as its own top-level field, so the guard
+could identify the server directly rather than stripping a configured prefix from `tool_name`. Not
+changed here — the prefix list is what the registry is built on and `checkTool` works — but it is a
+cheaper discriminator. A matcher cannot use it, since matchers match tool names.
