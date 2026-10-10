@@ -17,7 +17,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { checkTool, checkUrl, loadSites } = require('./policy');
+const { checkTool, checkUrl, loadBrowsers, loadSites } = require('./policy');
 
 const AGENT_TYPE = 'claude-deal-scout:deal-scout';
 
@@ -36,6 +36,9 @@ const MAX_URLS = 50;
 
 /** `DEAL_SCOUT_SITES_DIR` overrides the adapter directory. Test seam only — see Review Notes. */
 const SITES_DIR = process.env.DEAL_SCOUT_SITES_DIR || path.join(__dirname, '..', 'sites');
+
+/** `DEAL_SCOUT_BROWSERS_DIR` overrides the browser registry. Test seam only — see Review Notes. */
+const BROWSERS_DIR = process.env.DEAL_SCOUT_BROWSERS_DIR || path.join(__dirname, '..', 'browsers');
 
 const ALLOW = { code: 0, stdout: '', stderr: '' };
 
@@ -66,9 +69,9 @@ function readPayload() {
 // Decisions
 // ---------------------------------------------------------------------------
 
-function evaluatePre(payload, adapters) {
+function evaluatePre(payload, adapters, browsers) {
   const toolName = payload.tool_name;
-  const toolCheck = checkTool(toolName);
+  const toolCheck = checkTool(toolName, browsers);
   if (!toolCheck.ok) return blocked(toolCheck.reason);
 
   const bare = toolCheck.tool;
@@ -133,13 +136,13 @@ function evaluatePost(payload, adapters) {
  * The whole decision, scoping included — so the selftest matrix exercises exactly what a real hook
  * call exercises. `mode` is `pre` or `post`.
  */
-function evaluate(mode, payload, adapters) {
+function evaluate(mode, payload, adapters, browsers) {
   if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('hook payload is not a JSON object');
   }
   // Scoped out: every other agent, and every non-deal-scout Chrome call, is left alone (R3).
   if (payload.agent_type !== AGENT_TYPE) return ALLOW;
-  return mode === 'post' ? evaluatePost(payload, adapters) : evaluatePre(payload, adapters);
+  return mode === 'post' ? evaluatePost(payload, adapters) : evaluatePre(payload, adapters, browsers);
 }
 
 /** An unparseable payload, a broken adapter or any other throw must block, not pass. */
@@ -203,7 +206,7 @@ const SELFTEST_CASES = [
   ['deny: post on a tab listing that shows an off-allowlist tab', 'post', { agent_type: AGENT_TYPE, tool_name: 'mcp__claude-in-chrome__tabs_context_mcp', tool_response: { availableTabs: [{ tabId: 1, url: 'https://ad.example.com/promo' }] } }, 0, true],
 ];
 
-function selftest(adapters) {
+function selftest(adapters, browsers) {
   let misses = 0;
   let count = 0;
 
@@ -211,7 +214,7 @@ function selftest(adapters) {
     count += 1;
     let outcome;
     try {
-      outcome = evaluate(mode, payload, adapters);
+      outcome = evaluate(mode, payload, adapters, browsers);
     } catch (err) {
       process.stderr.write(`selftest MISS: ${name} — threw: ${err.message}\n`);
       misses += 1;
@@ -243,13 +246,14 @@ function selftest(adapters) {
 function run(mode) {
   // Loaded first, deliberately: a broken adapter must fail closed before anything is decided.
   const adapters = loadSites(SITES_DIR);
+  const browsers = loadBrowsers(BROWSERS_DIR);
 
-  if (mode === 'selftest') return selftest(adapters);
+  if (mode === 'selftest') return selftest(adapters, browsers);
   if (mode !== 'pre' && mode !== 'post') {
     throw new Error(`unknown mode "${mode}" (expected pre, post or selftest)`);
   }
 
-  const outcome = evaluate(mode, readPayload(), adapters);
+  const outcome = evaluate(mode, readPayload(), adapters, browsers);
   if (outcome.stdout) process.stdout.write(outcome.stdout);
   if (outcome.stderr) process.stderr.write(outcome.stderr);
   return outcome.code;

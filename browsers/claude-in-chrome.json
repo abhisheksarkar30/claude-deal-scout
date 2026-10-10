@@ -1,0 +1,22 @@
+{
+  "id": "claude-in-chrome",
+  "label": "Claude in Chrome",
+  "prefixes": ["mcp__claude-in-chrome__", "mcp__Claude_Browser__"],
+  "allow": [
+    "tabs_context_mcp",
+    "tabs_create_mcp",
+    "tabs_close_mcp",
+    "navigate",
+    "read_page",
+    "get_page_text",
+    "find"
+  ],
+  "url_bearing": ["navigate"],
+  "landing_check": ["navigate", "tabs_context_mcp"],
+  "notes": [
+    "The seven allow entries are the settled read-only set. Adding one is a security decision, not a convenience: every added tool is attack surface that the subagent's prompt-level tool grant would otherwise have refused.",
+    "Two prefixes, because the same server is reachable under two names: claude-in-chrome is the connected extension, Claude_Browser is the built-in pane. Both are stripped before the bare-name lookup, and a tool under any other server prefix is denied.",
+    "url_bearing lists the tools whose tool_input must carry a url. tabs_create_mcp is deliberately absent: it takes no parameters and opens a blank tab, so the url is checked on the navigate that follows it.",
+    "landing_check lists the tools whose response is scanned for an off-allowlist landing, and it is deliberately not the same set as allow. read_page and get_page_text return the page itself, which is full of third-party links; scanning those responses would block every read."
+  ]
+}

@@ -5,18 +5,19 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 
 const {
-  ALLOWED_TOOLS,
   DENY_VOCABULARY,
   ADVERSARIAL_PATHS,
   MAX_URL_LENGTH,
   checkTool,
   checkUrl,
+  loadBrowsers,
   loadSites,
   validateSites,
   sourceToBareId,
 } = require('../scripts/policy');
 
 const ADAPTERS = loadSites(path.join(__dirname, '..', 'sites'));
+const BROWSERS = loadBrowsers(path.join(__dirname, '..', 'browsers'));
 
 const ok = (url) => checkUrl(url, ADAPTERS).ok;
 const why = (url) => checkUrl(url, ADAPTERS).reason;
@@ -169,12 +170,21 @@ test('the adversarial path suite exercises every deny-vocabulary token', () => {
 // checkTool
 // ---------------------------------------------------------------------------
 
-test('checkTool allows the read-only set, bare or MCP-prefixed', () => {
-  for (const tool of ALLOWED_TOOLS) {
-    assert.equal(checkTool(tool).ok, true, tool);
-    assert.equal(checkTool(`mcp__claude-in-chrome__${tool}`).ok, true, tool);
-    assert.equal(checkTool(`mcp__Claude_Browser__${tool}`).ok, true, tool);
+test('checkTool allows the read-only set, bare or server-prefixed', () => {
+  // Driven off the loaded registry rather than a constant: the config is what is under test, so a
+  // tool added to browsers/*.json without a thought for this test still gets exercised here.
+  for (const browser of BROWSERS) {
+    for (const tool of browser.allow) {
+      assert.equal(checkTool(tool, BROWSERS).ok, true, tool);
+      for (const prefix of browser.prefixes) {
+        assert.equal(checkTool(`${prefix}${tool}`, BROWSERS).ok, true, `${prefix}${tool}`);
+      }
+    }
   }
+});
+
+test('checkTool strips a second configured prefix', () => {
+  assert.deepEqual(checkTool('mcp__Claude_Browser__navigate', BROWSERS), { ok: true, tool: 'navigate' });
 });
 
 test('checkTool denies every tool outside the read-only set', () => {
@@ -189,13 +199,13 @@ test('checkTool denies every tool outside the read-only set', () => {
     'read_network_requests',
   ];
   for (const tool of denied) {
-    assert.equal(checkTool(tool).ok, false, tool);
-    assert.equal(checkTool(`mcp__claude-in-chrome__${tool}`).ok, false, tool);
-    assert.equal(checkTool(`mcp__Claude_Browser__${tool}`).ok, false, tool);
+    assert.equal(checkTool(tool, BROWSERS).ok, false, tool);
+    assert.equal(checkTool(`mcp__claude-in-chrome__${tool}`, BROWSERS).ok, false, tool);
+    assert.equal(checkTool(`mcp__Claude_Browser__${tool}`, BROWSERS).ok, false, tool);
   }
-  assert.equal(checkTool('mcp__some-other-server__navigate').ok, false);
-  assert.equal(checkTool('').ok, false);
-  assert.equal(checkTool(undefined).ok, false);
+  assert.equal(checkTool('mcp__some-other-server__navigate', BROWSERS).ok, false);
+  assert.equal(checkTool('', BROWSERS).ok, false);
+  assert.equal(checkTool(undefined, BROWSERS).ok, false);
 });
 
 // ---------------------------------------------------------------------------

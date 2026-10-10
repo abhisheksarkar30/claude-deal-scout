@@ -10,7 +10,7 @@ moved twice; the source-file line numbers below are stable at `f0e9109` and are 
 - **Bead ID**: br-DS-2-01
 - **Priority**: P0 (critical — it creates the registry every later bead reads, and it is the bead that
   takes the tool policy away from hardcoded constants)
-- **Status**: pending
+- **Status**: done
 - **Original Estimate**: 2-2.5h
 - **Dependencies**: None
 - **Blocks**: br-DS-2-02
@@ -188,4 +188,53 @@ policy a caller is judged against).
 
 ## Review Notes
 
-_Appended at implementation, not at beadify time._
+**What was built.** `browsers/claude-in-chrome.json` with the four sets (prefixes, allow,
+`url_bearing`, `landing_check`) transcribed from the constants and the `PostToolUse` regex, each
+array carrying a note saying why it holds what it holds — including why `landing_check` is *not*
+`allow` (the page-text tools return link-dense text and are deliberately not scanned).
+`validateBrowsers` + `loadBrowsers` in `scripts/policy.js`, reusing `fail`/`isNonEmptyString`/
+`isStringList` rather than adding parallel validators. `checkTool(tool, browsers)` now takes the
+union of the loaded adapters' prefixes and `allow`. `ALLOWED_TOOLS`/`MCP_PREFIXES` are gone from the
+file and from `module.exports`; the file JSDoc and the constant-block comment were updated, since
+both had claimed the allowlist lived here. `guard.js` gained `BROWSERS_DIR`, `loadBrowsers` in the
+import, and `browsers` threaded through `run`/`evaluate`/`evaluatePre`/`selftest` — no behaviour
+change anywhere else: `URL_BEARING_TOOLS`, `evaluatePost`, `AGENT_TYPE`, the `run()` ordering and the
+selftest matrix are untouched, exactly as the bead specifies.
+
+**Deviation from the plan.** One, and it is the Phase 4 re-seam already recorded in the plan's v8
+entry and in §8's prose: this bead also carries the single `guard.js` call-site change, because
+`checkTool`'s only production caller is `guard.js:71` and splitting them left this commit unable to
+pass `npm test`. Nothing else deviates.
+
+**Verification observed.**
+- `npm test` → `tests 116 / pass 116 / fail 0` (baseline 103 across 6 files; 13 new — 12 in
+  `test/browser.test.js`, 1 in `test/policy.test.js`).
+- `node scripts/guard.js selftest` → `selftest OK: 32 cases`, **exit 0, count unchanged**. This is
+  the behaviour-preservation evidence the bead asks for: the matrix is untouched, so the same 32
+  cases passing against registry-driven policy is the proof that nothing about the guard's decisions
+  moved.
+- `node -e "…loadBrowsers('./browsers').length"` → `1`.
+
+**Negative control (plan §5.4, second) — run, and it failed as required.** Reverted the subset check
+in `validateBrowsers` by making its condition `if (false)`. Result: **two** tests failed, not one —
+`a landing_check entry must also be in allow` *and* `a url_bearing entry must also be in allow`,
+because the reverted check is the single loop that covers both keys. That is a stronger control than
+the bead asked for (it proves both subset bounds are live), and the named one is among the failures.
+Restored the line, re-ran: `116/116` and `selftest OK: 32 cases`. `grep -n "if (false)" scripts/`
+returns nothing.
+
+**Tests added beyond the bead's list**, because each covers a real branch the bead's Outcome
+depends on: `'the shipped registry landing-checks the navigation tools only'` (pins the
+`landing_check` set the guard's §3.2 gate will read), `'url_bearing and landing_check may be empty
+arrays'` (a browser with no navigable tool is legal, so the empty case must not be rejected),
+`'duplicate adapter ids are rejected'`, `'a browser adapter must be a JSON object carrying an id and
+a label'`, and the empty-directory half of `'loadBrowsers fails closed on a missing or empty browsers
+directory'` (plan §5.1 lists "a broken or empty `browsers/` dir fails open" as a risk, so both
+fail-closed branches are exercised, not just the missing one). The allow loop in
+`test/policy.test.js` is also stronger than the constant loop it replaces: it now iterates each
+registry adapter's own prefixes rather than assuming both prefixes apply to every tool.
+
+**Deliberately not done here.** `url_bearing` and `landing_check` are recorded and validated by this
+bead but consumed by none — that is br-DS-2-02's job, and the registry had to exist in its final
+shape first. No `docs/context/*` file was touched; that is the workflow's context-refresh phase, per
+the plan's §11.
