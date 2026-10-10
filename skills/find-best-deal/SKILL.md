@@ -20,8 +20,10 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/guard.js" selftest
 It must exit 0. This also proves `node` exists — the one failure the hook itself cannot cover. If it
 fails, stop and show the user the error; do not proceed.
 
-Then confirm the Claude in Chrome tools are available in this session. If they are not, stop and tell the
-user to install/enable Claude in Chrome before going further.
+Then confirm the configured browser tools are available in this session — by default the Claude in Chrome
+tools, per `browsers/claude-in-chrome.json`. If they are not, stop and tell the user to install/enable the
+browser the registry names before going further. Do not substitute a different browser tool: the guard
+allows only the names that registry carries.
 
 ## 1. Intake
 
@@ -55,7 +57,7 @@ node -e "console.log(JSON.stringify(require(process.argv[1]).loadSites(process.a
 ```
 
 Spawn the `claude-deal-scout:deal-scout` subagent **in the foreground**, passing it the requirement and
-the adapter contents in the prompt. It has only the seven read-only browsing tools.
+the adapter contents in the prompt. It has only the configured read-only browser tools.
 
 **The main thread never drives Chrome itself.** The guard hook is scoped to the subagent's `agent_type`;
 a Chrome call made from the main thread is not covered by it, so making one would bypass the only

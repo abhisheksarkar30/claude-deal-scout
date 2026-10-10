@@ -25,8 +25,9 @@ Then restart, or run `/reload-plugins`, so the hooks load.
 
 Installing edits your Claude Code configuration, so do it deliberately — nothing here does it for you.
 
-**Requires:** `node` on your PATH (any recent version; there are no dependencies to install) and the
-Claude in Chrome extension, connected.
+**Requires:** `node` on your PATH (any recent version; there are no dependencies to install) and a
+browser the plugin is configured for — by default the Claude in Chrome extension, connected. The browser
+is configuration, not a hard dependency: see [Swapping the browser](#swapping-the-browser).
 
 ## Use
 
@@ -126,6 +127,53 @@ Add one only after confirming, by hand, that its pages expose **all four** of `c
 `highest` and `average` as readable text. The agent cannot click, so a site that renders its chart and
 hides the numbers is useless here no matter how good its data is. A partial result counts as no data.
 
+## Model and browser independence
+
+**No model dependency.** Nothing here requires a Claude model. There is no `model:` key in any
+frontmatter, and nothing in `scripts/`, `sites/` or `data/` names one. The deterministic core —
+`score.js`, `history.js`, `report.js` — is plain Node with zero dependencies, so the plugin runs
+unchanged under whichever model your session is using.
+
+**The browser is configuration.** Which browser tools the research subagent may call, which must carry a
+URL, and which get a landing check are all one `browsers/*.json` file, not code. The guard enforces that
+registry on every MCP tool call. Claude in Chrome is the shipped default.
+
+**One harness-supplied value.** `${CLAUDE_PLUGIN_ROOT}` appears only in the skill's shell commands and
+the two hook commands; no script reads it. `report.js` and `guard.js` resolve `sites/`, `browsers/` and
+`data/` from their own location, so both work from any working directory.
+
+## Swapping the browser
+
+Adding a browser is adding a file — but unlike adding a site it is **not only** a file, because the
+subagent's tool grant is fixed Markdown. Three steps:
+
+1. **Add `browsers/<id>.json`**, by copying `browsers/claude-in-chrome.json` and replacing its arrays:
+
+   - `prefixes` — the MCP server names its tools arrive under, each ending in `__`. A tool under any
+     prefix not listed here is denied, so a browser whose server name nobody wrote down is a browser
+     nothing may call.
+   - `allow` — the bare tool names the agent may call; everything else is default-denied. This is the
+     read-only guarantee, so keep it as tight as you can stand.
+   - `url_bearing` — the tools whose call must carry a `url`. A missing one fails closed.
+   - `landing_check` — the tools whose *response* is scanned for an off-allowlist landing. Deliberately
+     **not** the same as `allow`: a tool that returns page text must stay out of it, or its third-party
+     links will block every read.
+
+   A malformed adapter makes the guard **fail closed** — the run stops rather than proceeding with a
+   policy that isn't what you think it is. Two adapters may not claim the same server prefix or the same
+   tool name: that would make "which policy applies" depend on load order, so it is a load error instead.
+
+2. **Rewrite the subagent's `tools:` list** in `agents/deal-scout.md` to that server's names. This is
+   the step that cannot be generated, and the one people forget: if the two lists disagree, the agent
+   either holds a tool the guard denies or has no policy for the tool it was granted.
+
+3. **Reload.** Bump `version` in `.claude-plugin/plugin.json`, then
+   `claude plugin update claude-deal-scout@claude-deal-scout` and restart (or `/reload-plugins`). Hook
+   definitions are read from the installed copy, so a cache that was not updated keeps enforcing the old
+   policy.
+
+Then `node scripts/guard.js selftest` must exit 0.
+
 ## Security
 
 The safety model, the residual risks, and the manual end-to-end checklist live in
@@ -136,7 +184,8 @@ controls are **unverified** on this build, and that document says which.
 
 The full design plan is in `docs/planning/`. The short version: the model extracts, deterministic scripts
 judge (`scripts/score.js`, `scripts/history.js`), and a hook (`scripts/guard.js`, wired in
-`hooks/hooks.json`) enforces a per-site path allowlist on the research subagent.
+`hooks/hooks.json`) enforces two allowlists on the research subagent — a per-site path allowlist
+(`sites/*.json`) and a per-browser tool allowlist (`browsers/*.json`).
 
 ```bash
 npm test    # node --test, zero dependencies

@@ -57,20 +57,26 @@ important residual in this document: if the guard does not run, nothing mechanic
 
 ### R2 — Open redirects on allowlisted hosts
 
-**Mitigation.** The `post` hook ("PostToolUse on `navigate` and `tabs_context_mcp`") scans the tool
-response for URLs and blocks the page if any host is off-allowlist, telling the agent to discard the page
-and close the tab. The agent is told to call `tabs_context_mcp` after every `navigate`.
+**Mitigation.** The `post` hook scans the tool response for URLs and blocks the page if any host is
+off-allowlist, telling the agent to discard the page and close the tab. The hook *matches* every MCP tool
+call (`mcp__.*`) but only *scans* the tools the registry marks `landing_check` in `browsers/*.json` —
+currently `navigate` and `tabs_context_mcp`. The distinction is deliberate: `read_page` and
+`get_page_text` return the page itself, which is full of third-party links, so scanning those would block
+every read. The agent is told to call `tabs_context_mcp` after every `navigate`.
 **Residual.** H2 was live-checked and **failed for `navigate`**: its response only echoes the *requested*
 URL (see `.beads/DS-1/evidence-03.txt`), so a post hook on `navigate` alone sees nothing. The real landing
-URL appears in a `tabs_context_mcp` listing, which is why the hook now matches that tool too. That relies on
+URL appears in a `tabs_context_mcp` listing, which is why that tool is in `landing_check` and its response
+is scanned. That relies on
 the agent making the call (a prompt-level instruction), and it was observed on one sample only. Redirect
 protection is therefore the pre-check (requested URL only) plus this after-the-fact check; neither is
 independent of the agent behaving.
 
 ### R3 — Main thread driving Chrome unguarded
 
-**Mitigation.** The guard acts only when `agent_type === "claude-deal-scout:deal-scout"`, and the skill
-instructs the main thread never to drive Chrome itself.
+**Mitigation.** The guard acts only when `agent_type === "claude-deal-scout:deal-scout"` (the default;
+`DEAL_SCOUT_AGENT_TYPE` can move it, which is a portability seam for a harness that names agents
+differently — see `scripts/guard.js`), and the skill instructs the main thread never to drive Chrome
+itself.
 **Residual.** The scoping is what keeps ordinary Chrome use untouched — and it cuts both ways: a Chrome
 call made from the **main thread** is not guarded at all. The only control there is the skill's
 instruction. Always in the foreground subagent.
@@ -116,11 +122,18 @@ a dip estimate, never the ranking — but it can make a forecast look better-sup
 
 ### R9 — Hook matcher misses native-named tools
 
-**Mitigation.** `PreToolUse` matches `mcp__(claude-in-chrome|Claude_Browser)__.*`.
-**Residual.** A tool exposed under a **non-MCP name** never matches, so the guard never sees it — a
-**silent gap**, which is worse than a fail-open the guard could catch. **Unverified** — see hypothesis H4
-in `.beads/DS-1/evidence-03.txt`. If H4 fails, this must be fixed by widening the matcher before the
-plugin is trusted.
+**Mitigation.** `PreToolUse` matches `mcp__.*` — **every** MCP tool call, deliberately not one vendor's
+server. A matcher naming `claude-in-chrome` would silently stop applying the moment a different browser
+was configured in `browsers/*.json`, which is a bypass rather than a gap: the tool would run unchecked
+because the guard was never invoked. Widening to `mcp__.*` moves all tool policy into the guard, where
+`browsers/*.json` is the single source of truth and a name no adapter carries is default-denied.
+**Residual.** The matcher is now as wide as the MCP namespace allows, and the remaining gap is the one it
+cannot close: a tool exposed under a **non-MCP name** still never matches, so the guard never sees it — a
+**silent gap**, which is worse than a fail-open the guard could catch. Hypothesis H4 in
+`.beads/DS-1/evidence-03.txt` was live-checked and **passed** (every Chrome tool in that session was
+`mcp__claude-in-chrome__<name>` or `mcp__Claude_Browser__<name>`, none bare), so no such tool is known to
+exist — but the gap itself is unfixed by construction, not closed. A future browser exposed under bare
+names would need a `PreToolUse` entry per tool name, since no pattern can match them generically.
 
 ### R10 — The PII sanitizer is pattern-based
 

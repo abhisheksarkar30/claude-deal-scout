@@ -9,7 +9,7 @@ source-file line numbers below are stable at `f0e9109`.
 - **Bead ID**: br-DS-2-03
 - **Priority**: P0 (high — without it the registry is invisible and the independence claim is unstated,
   which is the whole point of the story)
-- **Status**: pending
+- **Status**: done
 - **Original Estimate**: 1-1.5h
 - **Dependencies**: br-DS-2-02
 - **Blocks**: None
@@ -118,4 +118,47 @@ makes; a claim and its proof belong in the same bead (the repo's tests-live-in-t
 
 ## Review Notes
 
-_Appended at implementation, not at beadify time._
+**What was built.** `agents/deal-scout.md` gained a maintainer-facing note stating where the tool grant
+comes from, the three-step swap and why granting no `tools:` list is not an option; the `tools:`
+frontmatter itself is unchanged. `SKILL.md`'s preflight says "the configured browser tools" and names
+`browsers/claude-in-chrome.json` as the default, with an explicit "do not substitute a different browser
+tool"; `:58`'s hard-coded "seven" is gone. `README.md` gained **Model and browser independence** and
+**Swapping the browser**, its **Requires** line now says the browser is configuration, and the **Design**
+summary names both allowlists rather than one. `docs/SECURITY.md` R2, R3 and R9 were updated.
+
+**Beyond the bead's `:60`/`:65`/`:119` list — two substantive edits, both because the story makes the
+old text *wrong* rather than merely imprecise:**
+
+- **R9 is rewritten, not find-and-replaced.** It said the matcher was
+  `mcp__(claude-in-chrome|Claude_Browser)__.*` and that if hypothesis H4 failed, "this must be fixed by
+  widening the matcher before the plugin is trusted". This story *is* that widening, so R9 now records
+  that the matcher is maximal within the MCP namespace, that H4 was live-checked and passed, and — the
+  part worth keeping — that the residual is **not** closed: a tool exposed under a non-MCP name still
+  never matches, and no pattern can match one generically. Treating a widened matcher as a fixed gap
+  would have been the dishonest version of this edit.
+- **R3 gained a clause** noting the scope is now `DEAL_SCOUT_AGENT_TYPE`-overridable, because R3's whole
+  argument is that the scope is what leaves ordinary use untouched, and that is now a default rather than
+  a constant.
+
+**The R5 test was proven, not asserted.** Added
+`'report.js resolves sites and the calendar from its own location, not the cwd'`, which spawns `report.js`
+with `cwd: os.tmpdir()`. Mutation-checked: changing `ROOT` in `scripts/report.js` from
+`path.join(__dirname, '..')` to `process.cwd()` made it fail (`tests 1 / pass 0 / fail 1`); reverting
+restored `122/122`, and `git diff --stat scripts/report.js` is empty, so §4.2's "report.js is not
+modified" holds literally.
+
+**Verification observed.** `npm test` → `tests 122 / pass 122 / fail 0` (121 after br-DS-2-02; 1 new).
+`node scripts/guard.js selftest` → `selftest OK: 36 cases`, exit 0.
+
+**Manual read-through (the bead's second Outcome item) — done.** No claim now presents one control layer
+as two: SECURITY.md R2 and R9 both say the *matcher* is a trigger and the *guard* is the control, which is
+the distinction the change creates. The swap steps were checked line by line against
+`validateBrowsers`/`loadBrowsers` from br-DS-2-01 — one gap was found and fixed in the same edit: the
+README did not mention that `validateBrowsers` rejects two adapters claiming the same server prefix or the
+same tool name, which a user adding a second browser could hit. It now does, with the reason (otherwise
+"which policy applies" depends on load order).
+
+**Not covered by any automated test** (stated, not faked): all of this bead's prose. There is deliberately
+no test asserting a README contains a string or a file exists — the DS-1 docs bead took the same position,
+and such a test constrains wording rather than behaviour. `docs/context/*` is untouched: that is the
+workflow's context-refresh phase, per the plan's §11.
