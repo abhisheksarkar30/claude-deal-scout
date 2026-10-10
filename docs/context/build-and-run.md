@@ -11,10 +11,10 @@ compile phase, and no dependencies to install. "Build" here means *run the tests
 |---|---|---|
 | Install dependencies | *none — do not run `npm install`* | [CLAUDE.md](../../CLAUDE.md), [package.json](../../package.json) (no `dependencies`) |
 | Build | *none* | — |
-| Test (all) | `npm test` (= `node --test`, 103 tests across 6 files) | [package.json:9](../../package.json#L9) |
+| Test (all) | `npm test` (= `node --test`, 123 tests across 7 files) | [package.json:9](../../package.json#L9) |
 | Test (single file) | `node --test test/history.test.js` | `node:test` CLI |
 | Test (single case) | `node --test --test-name-pattern="point-count gate" test/history.test.js` | `node:test` CLI |
-| Guard policy matrix | `node scripts/guard.js selftest` → must print `selftest OK: 32 cases` and exit 0 | [guard.js:206-237](../../scripts/guard.js#L206-L237) |
+| Guard policy matrix | `node scripts/guard.js selftest` → must print `selftest OK: 60 cases` and exit 0 | [guard.js:293-329](../../scripts/guard.js#L293-L329) |
 | Lint / format / type-check | *none configured* | see [conventions.md](conventions.md#formatting--lint) |
 | Run the feature | install the plugin (below), then `/claude-deal-scout:find-best-deal` | [skills/find-best-deal/SKILL.md](../../skills/find-best-deal/SKILL.md) |
 | Deploy | *none — the "deploy" is installing the plugin into Claude Code* | — |
@@ -56,15 +56,18 @@ node scripts/report.js --requirement '{"budget":50000,"eligible_conditions":["hd
 ```bash
 node scripts/guard.js pre       # reads a hook payload on stdin; exit 0 allow, 2 block
 node scripts/guard.js post      # reads a hook payload; prints {"decision":"block",…} to block
-node scripts/guard.js selftest  # 32-case matrix
+node scripts/guard.js selftest  # 60-case matrix
 ```
 
 `pre`/`post` exit 0 and do nothing when `agent_type` is anything but
-`claude-deal-scout:deal-scout` — that is what keeps ordinary Chrome use untouched. A hand-made
-payload is easy:
+`claude-deal-scout:deal-scout` — that is what keeps every other agent's MCP use untouched. A
+hand-made payload is easy:
 
 ```bash
+# the Claude in Chrome tool name
 echo '{"agent_type":"claude-deal-scout:deal-scout","tool_name":"navigate","tool_input":{"url":"https://www.amazon.in/dp/B0XXXXXXXX"}}' | node scripts/guard.js pre
+# the chrome-devtools equivalent — same decision, different adapter
+echo '{"agent_type":"claude-deal-scout:deal-scout","tool_name":"mcp__chrome-devtools__navigate_page","tool_input":{"pageId":1,"url":"https://www.amazon.in/dp/B0XXXXXXXX"}}' | node scripts/guard.js pre
 ```
 
 ## Environment variables / secrets
@@ -75,7 +78,9 @@ has no credentials of any kind, by design.
 | Name | Purpose | Required in |
 |---|---|---|
 | `CLAUDE_PLUGIN_ROOT` | absolute path to the installed plugin, used in the skill's shell commands and in `hooks/hooks.json` command strings | Claude Code sets it for plugin hooks and skills |
-| `DEAL_SCOUT_SITES_DIR` | overrides the adapter directory | **test seam only** ([guard.js:37-38](../../scripts/guard.js#L37-L38)); never set in production |
+| `DEAL_SCOUT_SITES_DIR` | overrides the site-adapter directory (`sites/`) | **test seam only** ([guard.js:57](../../scripts/guard.js#L57)); never set in production |
+| `DEAL_SCOUT_BROWSERS_DIR` | overrides the browser-registry directory (`browsers/`) | **test seam only** ([guard.js:60](../../scripts/guard.js#L60)); never set in production |
+| `DEAL_SCOUT_AGENT_TYPE` | overrides the `agent_type` the guard scopes to (default `claude-deal-scout:deal-scout`) | portability seam, not a knob ([guard.js:32](../../scripts/guard.js#L32)) |
 
 ## Local dev setup
 
@@ -83,9 +88,16 @@ has no credentials of any kind, by design.
 2. `npm test` — the whole suite should pass with 0 failures.
 3. `node scripts/guard.js selftest` — must exit 0. This is also the check the skill runs at
    preflight, and it doubles as proof that `node` is on `PATH`.
-4. To exercise the real feature you need the **Claude in Chrome** extension connected, and you must
-   log in to Amazon.in / Flipkart yourself in the Chrome window Claude is attached to. Never give
-   the agent credentials.
+4. To exercise the real feature you need the browser the subagent's grant names, and you must log in
+   to Amazon.in / Flipkart yourself in it. Two adapters ship:
+   - **`chrome-devtools`** (the current grant) — the MCP server must be registered, and it launches
+     its **own browser profile**, so it starts signed out. One-time sign-in, then it persists. It
+     needs Chromium; on a machine without Google Chrome, pass
+     `--executablePath` pointing at Brave or Edge. See README's "Chrome DevTools MCP".
+   - **`claude-in-chrome`** — the extension must be installed and connected, and it browses the
+     user's own already-signed-in Chrome.
+
+   Never give the agent credentials.
 5. Live end-to-end behaviour (real DOM extraction, CAPTCHA handling, redirect discard) is **not
    covered by any automated test** — run the manual checklist in
    [docs/SECURITY.md](../../docs/SECURITY.md) ("Manual end-to-end checklist"), with the user's

@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
@@ -177,4 +178,18 @@ test('the report CLI fails loudly on malformed input rather than printing a part
   assert.equal(result.status, 2);
   assert.equal(result.stdout, '');
   assert.match(result.stderr, /could not read/);
+});
+
+test('report.js resolves sites and the calendar from its own location, not the cwd', () => {
+  // R5, proven rather than asserted: no script may depend on a harness-supplied env var to find its
+  // data. `ROOT = path.join(__dirname, '..')` is what makes this pass from an unrelated directory —
+  // run it from a temp dir and both `sites/` and `data/sale-calendar.json` must still be found.
+  const input = JSON.stringify({ candidates: [candidate({ price: 1000 })], gaps: [], blocked: [] });
+  const result = spawnSync(process.execPath, [REPORT], {
+    input,
+    encoding: 'utf8',
+    cwd: os.tmpdir(),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).best_deal.source, 'amazon-in');
 });

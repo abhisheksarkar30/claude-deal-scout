@@ -1,0 +1,26 @@
+{
+  "id": "chrome-devtools",
+  "label": "Chrome DevTools MCP (any Chromium browser)",
+  "prefixes": ["mcp__chrome-devtools__"],
+  "allow": [
+    "list_pages",
+    "select_page",
+    "new_page",
+    "navigate_page",
+    "close_page",
+    "take_snapshot",
+    "wait_for"
+  ],
+  "url_bearing": ["new_page", "navigate_page"],
+  "landing_check": ["navigate_page", "list_pages"],
+  "notes": [
+    "The seven allow entries are the settled read-only set for this server, chosen to mirror the Claude in Chrome set tool for tool: list_pages/select_page/close_page for tabs, navigate_page for navigation, take_snapshot for reading. Adding one is a security decision, not a convenience.",
+    "This server is not Anthropic's and has no relationship to Claude in Chrome: it is ChromeDevTools/chrome-devtools-mcp (npm chrome-devtools-mcp), MCP server name chrome-devtools. It drives any Chromium-based browser via --executablePath, so 'Chrome' here means Chromium, not Google Chrome specifically.",
+    "take_snapshot replaces three of the Chrome tools at once — read_page, get_page_text and find — because it returns the page as an accessibility tree whose nodes carry both text and a stable uid, which is what those three were used for. There is no separate page-text tool.",
+    "evaluate_script is deliberately absent and must stay absent: it executes arbitrary JavaScript in the page, which is the same capability the Claude in Chrome set denies as javascript_tool. Every input tool (click, fill, fill_form, press_key, hover, drag, upload_file, handle_dialog, type_text) is absent for the same reason — the subagent is read-only, and it has no click step in any flow.",
+    "url_bearing includes new_page, unlike the Claude in Chrome set where tabs_create_mcp is exempt: new_page takes a url and loads it, so the URL is checked up front. A new_page call without a url therefore fails closed, which is intended.",
+    "landing_check lists navigate_page and list_pages, and is deliberately not the same set as allow. take_snapshot is the one that must never be added here: it is the page itself, and every link on a real product page carries its own url, so scanning its response would block every read.",
+    "Both landing-checked tools genuinely carry the landed URL: navigate_page's response embeds the page list ('1: Amazon.in : phone (https://www.amazon.in/s?k=phone) [selected]') and list_pages returns the same listing alone. This was read off a live run, not assumed from the tool descriptions.",
+    "Every page-scoped tool here requires a numeric pageId. The agent gets one from list_pages and passes it on each call; that is the server's default routing, not a flag this plugin sets."
+  ]
+}

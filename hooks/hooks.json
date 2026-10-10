@@ -1,9 +1,9 @@
 {
-  "description": "Path-allowlist guard for the claude-deal-scout research subagent. Scope is enforced inside the guard (agent_type === \"claude-deal-scout:deal-scout\"), so this never affects ordinary Claude in Chrome use.",
+  "description": "Path-allowlist guard for the claude-deal-scout research subagent. Matches every MCP tool call, so that no browser's server name has to be enumerated here; the guard itself is scoped, and returns allow immediately for any agent_type other than claude-deal-scout:deal-scout. See scripts/policy.js (browsers/*.json) for what is actually permitted.",
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "mcp__(claude-in-chrome|Claude_Browser)__.*",
+        "matcher": "mcp__.*",
         "hooks": [
           {
             "type": "command",
@@ -14,7 +14,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "mcp__(claude-in-chrome|Claude_Browser)__(navigate|tabs_context_mcp)",
+        "matcher": "mcp__.*",
         "hooks": [
           {
             "type": "command",

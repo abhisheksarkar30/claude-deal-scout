@@ -1,30 +1,25 @@
 'use strict';
 
 /**
- * Read-only policy for claude-deal-scout: which Claude in Chrome tools the research subagent may
- * call, and which URLs it may visit.
+ * Read-only policy for claude-deal-scout: which browser tools the research subagent may call, and
+ * which URLs it may visit.
  *
- * Pure functions and no I/O beyond reading `sites/*.json`. Both `guard.js` (the hook that enforces
- * this) and `score.js` (which re-checks every URL in the agent's report) call in here, so a mistake
- * in this file is a mistake in every layer.
+ * Pure functions and no I/O beyond reading `sites/*.json` (the URL policy) and `browsers/*.json`
+ * (which browser tools exist). Both `guard.js` (the hook that enforces this) and `score.js` (which
+ * re-checks every URL in the agent's report) call in here, so a mistake in this file is a mistake
+ * in every layer.
  */
 
 const fs = require('node:fs');
 const path = require('node:path');
 
-/** Tool names the agent may call. Anything else the hook matches is denied (default-deny). */
-const ALLOWED_TOOLS = [
-  'tabs_context_mcp',
-  'tabs_create_mcp',
-  'tabs_close_mcp',
-  'navigate',
-  'read_page',
-  'get_page_text',
-  'find',
-];
-
-/** Server prefixes Claude in Chrome may expose those tools under. */
-const MCP_PREFIXES = ['mcp__claude-in-chrome__', 'mcp__Claude_Browser__'];
+/**
+ * The tool allowlist and the browser server prefixes are deliberately **not** here. They are
+ * per-browser data, read from `browsers/*.json` by `loadBrowsers` and passed into `checkTool`.
+ * Claude in Chrome is the shipped adapter; adding a browser is adding a file, never editing this
+ * one. The URL policy below stays in this file, because `sites/*.json` holds the per-site data for
+ * it and the two registries answer different questions.
+ */
 
 /**
  * Path vocabulary marking an account- or mutation-bearing URL. `deny` entries in an adapter are
@@ -65,23 +60,28 @@ function deny(reason) {
 // ---------------------------------------------------------------------------
 
 /**
- * Is `tool` in the read-only allow set? Accepts either the bare name (`navigate`) or an
- * MCP-prefixed one (`mcp__claude-in-chrome__navigate`).
+ * Is `tool` in the read-only allow set of the loaded browsers? Accepts either the bare name
+ * (`navigate`) or a server-prefixed one (`mcp__claude-in-chrome__navigate`).
+ *
+ * Both the prefixes and the allow set are the **union** across the loaded adapters, so a second
+ * `browsers/*.json` needs no selection rule here. A name carrying a prefix no adapter claims is
+ * denied by the `includes('__')` guard: that is what keeps `mcp__some-other-server__navigate` out
+ * now that the hook matcher fires on every MCP tool call, not just one vendor's.
  */
-function checkTool(tool) {
+function checkTool(tool, browsers) {
   if (typeof tool !== 'string' || tool === '') return deny('tool call carries no tool name');
 
   let bare = tool;
-  for (const prefix of MCP_PREFIXES) {
+  for (const prefix of browsers.flatMap((b) => b.prefixes)) {
     if (tool.startsWith(prefix)) {
       bare = tool.slice(prefix.length);
       break;
     }
   }
   if (bare === tool && tool.includes('__')) {
-    return deny(`"${tool}" is not a Claude in Chrome MCP tool`);
+    return deny(`"${tool}" is not a configured browser tool`);
   }
-  if (!ALLOWED_TOOLS.includes(bare)) {
+  if (!browsers.some((b) => b.allow.includes(bare))) {
     return deny(`tool "${bare}" is not in the read-only allow set`);
   }
   return { ok: true, tool: bare };
@@ -297,14 +297,119 @@ function loadSites(dir) {
   return validateSites(entries);
 }
 
+// ---------------------------------------------------------------------------
+// Browser registry
+// ---------------------------------------------------------------------------
+
+/** A server prefix is a literal, not a regex: it ends in `__` and is stripped verbatim. */
+function isPrefix(v) {
+  return isNonEmptyString(v) && v.endsWith('__');
+}
+
+/** A bare tool name — what is left after the prefix is stripped. Never itself contains `__`. */
+function isBareToolName(v) {
+  return isNonEmptyString(v) && !v.includes('__');
+}
+
+/** A non-empty array of distinct non-empty strings, each satisfying `isValid`. */
+function isUniqueStringList(v, isValid) {
+  return Array.isArray(v) && v.length > 0 && v.every(isValid) && new Set(v).size === v.length;
+}
+
+/**
+ * Validate parsed browser entries (already-shaped `{ file, data }`). Throws on the first problem;
+ * `loadBrowsers`' caller turns that into a fail-closed exit.
+ *
+ * Two checks need the whole set, so they run per entry but against cross-file maps: a server prefix
+ * may be claimed by one adapter only, and a bare tool name may appear in one adapter's `allow` only.
+ * A name owned by two adapters would otherwise be judged against whichever policy loaded first,
+ * which is exactly the kind of silent ambiguity the URL half refuses to have.
+ */
+function validateBrowsers(entries) {
+  const adapters = [];
+  const seenIds = new Map();
+  const seenPrefixes = new Map();
+  const seenTools = new Map();
+
+  for (const { file, data } of entries) {
+    const where = `browsers/${file}`;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) fail(where, 'adapter must be a JSON object');
+
+    const { id, label, prefixes, allow, url_bearing, landing_check, notes } = data;
+    if (!isNonEmptyString(id)) fail(where, 'missing string "id"');
+    if (seenIds.has(id)) fail(where, `duplicate adapter id "${id}" (also in browsers/${seenIds.get(id)})`);
+    if (!isNonEmptyString(label)) fail(where, 'missing string "label"');
+    if (!isUniqueStringList(prefixes, isPrefix)) {
+      fail(where, '"prefixes" must be a non-empty array of distinct strings, each ending in "__"');
+    }
+    if (!isUniqueStringList(allow, isBareToolName)) {
+      fail(where, '"allow" must be a non-empty array of distinct bare tool names');
+    }
+    if (notes !== undefined && !isStringList(notes)) fail(where, '"notes" must be an array of strings');
+
+    for (const key of ['url_bearing', 'landing_check']) {
+      const list = data[key];
+      if (!Array.isArray(list)) fail(where, `"${key}" must be an array`);
+      for (const tool of list) {
+        if (!allow.includes(tool)) fail(where, `"${key}" names "${tool}", which is not in "allow"`);
+      }
+    }
+
+    for (const prefix of prefixes) {
+      if (seenPrefixes.has(prefix)) {
+        fail(where, `server prefix "${prefix}" is already claimed by browsers/${seenPrefixes.get(prefix)}`);
+      }
+      seenPrefixes.set(prefix, file);
+    }
+    for (const tool of allow) {
+      if (seenTools.has(tool)) {
+        fail(where, `tool "${tool}" is already allowed by browsers/${seenTools.get(tool)}`);
+      }
+      seenTools.set(tool, file);
+    }
+
+    seenIds.set(id, file);
+    adapters.push({
+      id,
+      label,
+      prefixes: prefixes.slice(),
+      allow: allow.slice(),
+      url_bearing: url_bearing.slice(),
+      landing_check: landing_check.slice(),
+      notes: (notes || []).slice(),
+    });
+  }
+
+  return adapters;
+}
+
+/** Read and validate every `browsers/*.json` under `dir`. Throws if any adapter is invalid. */
+function loadBrowsers(dir) {
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')).sort();
+  if (files.length === 0) throw new Error(`no browser adapters found in ${dir}`);
+
+  const entries = files.map((file) => {
+    let data;
+    try {
+      data = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+    } catch (err) {
+      throw new Error(`browsers/${file}: not valid JSON — ${err.message}`);
+    }
+    return { file, data };
+  });
+
+  return validateBrowsers(entries);
+}
+
 module.exports = {
-  ALLOWED_TOOLS,
   DENY_VOCABULARY,
   ADVERSARIAL_PATHS,
   MAX_URL_LENGTH,
   checkTool,
   checkUrl,
+  loadBrowsers,
   loadSites,
+  validateBrowsers,
   validateSites,
   sourceToBareId,
 };

@@ -18,15 +18,32 @@ the whole threat model.
 ## The auth / permission model, in code
 
 There is **no authentication** — no login, no token, no session, no user account. The plugin borrows
-the user's existing Chrome session and never handles credentials. "Permissions" here means two
+the browser session it is granted and never handles credentials. "Permissions" here means two
 allowlists:
 
 ### Tool allowlist (default deny)
-[`ALLOWED_TOOLS`, policy.js:16-24](../../scripts/policy.js#L16-L24) — exactly seven read-only tools.
-Anything else the hook matcher catches is denied, including `computer`, `form_input`,
-`javascript_tool`, `file_upload`, `upload_image`, `gif_creator`, `read_console_messages`, and
-`read_network_requests`. `read_network_requests` is excluded specifically because request data can
-carry session headers. Each is denied bare **and** MCP-prefixed.
+[`browsers/`](../../browsers) — **two adapters ship**, each with exactly seven read-only tools,
+validated and loaded by
+[`validateBrowsers` / `loadBrowsers`, policy.js:328-402](../../scripts/policy.js#L328-L402). The hook
+matcher is `mcp__.*` (every MCP tool call, so no vendor's server name is enumerated here), and
+anything not in the loaded registry is denied.
+
+**Two sets, and the guard takes their union.** `claude-in-chrome` denies `computer`, `form_input`,
+`javascript_tool`, `file_upload`, `upload_image`, `gif_creator`, `read_console_messages`,
+`read_network_requests`; `chrome-devtools` denies the equivalents — `evaluate_script` (the same
+arbitrary-page-JS capability as `javascript_tool`), every input tool (`click`, `fill`, `fill_form`,
+`press_key`, `hover`, `drag`, `upload_file`, `handle_dialog`, `type_text`), plus
+`list_network_requests`, `take_screenshot` and the performance/console tools.
+`read_network_requests` / `list_network_requests` are excluded specifically because request data can
+carry session headers.
+
+> **Union vs grant — not the same thing.** The guard allows the union of every loaded adapter's
+> prefixes and tools, but the subagent can only call what its single `tools:` frontmatter names. So
+> *which browser is active* is decided by the frontmatter, not the registry, and the guard's allow set
+> is deliberately the more permissive of the two. Adding a second adapter widens what the guard
+> *permits* without widening what the agent *has*.
+Each is denied bare **and** under a configured prefix; a name under an *unconfigured* server prefix
+(`mcp__some-other-server__navigate`) is denied too, by the `includes('__')` guard in `checkTool`.
 
 ### Path allowlist (per site, control not denylist)
 `checkUrl` requires: https only, no userinfo, no port other than 443/empty, no trailing-dot host,
@@ -49,10 +66,12 @@ Some controls are verified, some are not. Do not describe an unverified one as v
 |---|---|---|
 | Host match is exact (look-alikes fail) | ✅ unit-tested, and the negative control (swap to `endsWith`) is specified | [test/policy.test.js](../../test/policy.test.js), plan §5.4 control 1 |
 | Guard fails closed (bad stdin/adapter → exit 2) | ✅ spawns the real script | [test/guard.test.js](../../test/guard.test.js) |
-| Guard leaves other agents' Chrome use alone | ✅ | [test/guard.test.js](../../test/guard.test.js) |
+| Guard leaves other agents' MCP use alone | ✅ | [test/guard.test.js](../../test/guard.test.js) |
 | `history` adapter overbroad-allow rejection | ✅ | [test/adapter.test.js:78-99](../../test/adapter.test.js#L78-L99) |
-| Subagent `tools:` allowlist is honoured (H1) | ✅ **live-checked, passed** — the subagent had exactly the seven tools; `javascript_tool` / `read_network_requests` did not exist for it. One run on one build; **re-check after a Claude Code upgrade** | [evidence-07.txt](../../.beads/DS-1/evidence-07.txt), SECURITY.md R11 |
-| `navigate`'s response contains the final URL (H2) | ❌ **live-checked, FAILED** — it echoes only the *requested* URL, which is why the post hook also matches `tabs_context_mcp` | [evidence-03.txt](../../.beads/DS-1/evidence-03.txt), SECURITY.md R2 |
+| Subagent `tools:` allowlist is honoured (H1) | ⚠️ **live-checked for the `claude-in-chrome` grant only** — under it the subagent had exactly the seven tools, and `javascript_tool` / `read_network_requests` did not exist for it. **This does not transfer to the `chrome-devtools` grant**, which is refused by the guard + the selftest matrix rather than observed | [evidence-07.txt](../../.beads/DS-1/evidence-07.txt), SECURITY.md R11 |
+| The guard blocks an off-allowlist tool from a real MCP server | ✅ **live-checked, both directions** — `mcp__chrome-devtools__list_pages` allowed and returned real pages; `mcp__chrome-devtools__click` blocked with `tool "click" is not in the read-only allow set` | [browsers/chrome-devtools.json](../../browsers/chrome-devtools.json), [SELFTEST_CASES, guard.js:195-291](../../scripts/guard.js#L195-L291) |
+| `navigate`'s response contains the final URL (H2) | ✅ **true for `chrome-devtools`, false for `claude-in-chrome`** — chrome-devtools' `navigate_page` and `list_pages` both embed the landed URL (`1: Amazon.in : phone (https://…) [selected]`), read off a live run; Claude in Chrome's `navigate` echoes only the *requested* URL, which is why its `landing_check` carries `tabs_context_mcp` as well | [evidence-03.txt](../../.beads/DS-1/evidence-03.txt), [browsers/](../../browsers), SECURITY.md R2 |
+| `take_snapshot` must stay out of `landing_check` | ✅ **live-checked** — a real Amazon search snapshot was ~290 KB and carried a `url=` on nearly every link, so scanning it would block every read | [browsers/chrome-devtools.json](../../browsers/chrome-devtools.json), [test/browser.test.js](../../test/browser.test.js) |
 | No dangerous tool is exposed under a non-MCP name (H4) | ❓ **UNVERIFIED** — if one is, the hook matcher never fires for it: a *silent* gap, worse than a fail-open | SECURITY.md R9 |
 | Live end-to-end behaviour on real pages | ❌ not covered by any automated test; manual checklist only | [SECURITY.md](../../docs/SECURITY.md) "Manual end-to-end checklist" |
 
@@ -62,7 +81,7 @@ Some controls are verified, some are not. Do not describe an unverified one as v
 |---|---|---|
 | R1 | Fail-open on hook failure | a missing `node`, an uncatchable crash or a hook timeout is **non-blocking**. The single most important residual. `selftest` preflight is a partial answer, not a fix |
 | R2 | Open redirects on allowlisted hosts | post-check is after-the-fact and depends on the agent calling `tabs_context_mcp` |
-| R3 | Main thread driving Chrome | unguardable by design — the guard's scope is what keeps ordinary Chrome use untouched; the only control is the skill's instruction |
+| R3 | Main thread driving the browser | unguardable by design — the guard's scope is what keeps every other agent's MCP use untouched; the only control is the skill's instruction |
 | R4 | Prompt injection through the report | a *plausible-looking wrong number* is still just a number; validation bounds it, the flag rules catch the implausible, nothing proves it false |
 | R5 | Third-party history sites | unknown provenance; the host allowlist widens with each one added. Never add a history site that needs login or account data |
 | R6 | Forecast overconfidence | the next-dip estimate is a heuristic validated on synthetic series — it says nothing about prediction accuracy |
@@ -99,7 +118,7 @@ note.
 2. **The path allowlist is the control; the denylist is depth.** Never widen `allow` for
    convenience — the shipped Amazon adapter's own note says so: "every added path is unreviewed
    attack surface."
-3. **The main thread must never drive Chrome.** A Chrome call outside the subagent bypasses the only
+3. **The main thread must never drive the browser.** A browser call outside the subagent bypasses the only
    mechanical enforcement layer.
 4. **Never send account data to a history site.** Only the public, query-stripped product URL or
    title.
