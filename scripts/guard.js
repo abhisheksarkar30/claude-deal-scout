@@ -136,8 +136,12 @@ function evaluatePost(payload, adapters, browsers) {
   // tool's response is worth reading, and a tool outside the allow set is the `pre` hook's problem,
   // not this one's. Without this gate, `read_page`'s page text — full of third-party links — would
   // block every read.
+  //
+  // The polarity matters: skip only when the tool is *positively identified* as one that is not
+  // landing-checked. A payload whose tool name does not resolve is malformed, and the fail-closed
+  // direction for a scan is to scan — so an unresolvable name falls through rather than past.
   const toolCheck = checkTool(payload.tool_name, browsers);
-  if (!toolCheck.ok || !isLandingChecked(toolCheck.tool, browsers)) return ALLOW;
+  if (toolCheck.ok && !isLandingChecked(toolCheck.tool, browsers)) return ALLOW;
 
   const response = payload.tool_response !== undefined ? payload.tool_response : payload.tool_result;
 
@@ -241,6 +245,10 @@ const SELFTEST_CASES = [
   // The landing-check gate (browsers/*.json `landing_check`). This row is the whole reason the gate
   // exists: read_page's response is the page itself, so a link-dense page must pass unscanned.
   ['allow: a page-text tool response full of off-allowlist URLs is not scanned', 'post', { agent_type: AGENT_TYPE, tool_name: 'mcp__claude-in-chrome__read_page', tool_response: 'Reviews mention https://ad.example.com/promo and https://tracker.example.net/x' }, 0],
+  // ...but the gate skips only a tool it can positively identify. An unresolvable name is a malformed
+  // payload, and a scan's fail-closed direction is to scan, so these two must still block.
+  ['deny: post whose tool name does not resolve is still scanned', 'post', { agent_type: AGENT_TYPE, tool_name: 'mcp__unconfigured__read_page', tool_response: { url: 'https://ad.example.com/promo' } }, 0, true],
+  ['deny: post carrying no tool name at all is still scanned', 'post', { agent_type: AGENT_TYPE, tool_response: { url: 'https://ad.example.com/promo' } }, 0, true],
 ];
 
 function selftest(adapters, browsers) {

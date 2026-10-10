@@ -239,3 +239,32 @@ story exists to make pluggable.
 **Deliberately not done here.** No `docs/context/*` or `docs/SECURITY.md` edit — those are br-DS-2-03
 and the context-refresh phase respectively. The `$CLAUDE_PLUGIN_ROOT` in the hook commands is
 untouched.
+
+### Cross-review (Phase 5.5) — one gap found and fixed
+
+The delegated `autonomous-loop:impl-conductor` could not run: its subagent model returned HTTP 502
+then 400 on three dispatches. An independent fresh-context reviewer was used instead, on a different
+model, with the same brief. It re-ran the §5.4 first control, confirmed the byte-identical restore,
+and raised one gap here besides the two it confirmed elsewhere.
+
+**The `evaluatePost` gate was too permissive on a malformed payload.** It read
+`if (!toolCheck.ok || !isLandingChecked(...)) return ALLOW;` — so a `post` payload whose
+`tool_name` was missing or unresolvable skipped the scan entirely, where the pre-change code scanned
+every response. Unreachable through the real harness (PostToolUse always carries a tool name), but it
+is a fail-open in a security scan, and the direction this repo takes on ambiguity is to fail closed.
+Now `if (toolCheck.ok && !isLandingChecked(...))` — the gate skips only a tool it can *positively*
+identify as not landing-checked, and an unresolvable name falls through to the scan. This is a
+deliberate deviation from plan §3.2's wording ("bail out with `ALLOW` unless it is in the union of
+`landing_check`"), which assumes a resolvable tool; it tightens the control without changing any
+reachable behaviour.
+
+Two selftest rows pin the polarity — `deny: post whose tool name does not resolve is still scanned`
+and `deny: post carrying no tool name at all is still scanned` — and both were mutation-checked:
+reverting to `!toolCheck.ok ||` fails exactly those two (`2 of 38 cases missed`). Selftest is now
+**38 cases**, `npm test` **122/122**.
+
+Everything else the reviewer checked came back clean: the `landing_check` gate is load-bearing and
+genuinely distinct from `allow`; the `run()` reorder preserves fail-closed on `pre`/`post` and the
+`selftest` path; the harness change is compatible with every row; §4.2's files are untouched; and
+removing `ALLOWED_TOOLS`/`MCP_PREFIXES` did not weaken the suite, since `test/policy.test.js` now
+iterates the loaded registry per-adapter.

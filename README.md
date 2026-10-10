@@ -174,6 +174,13 @@ subagent's tool grant is fixed Markdown. Three steps:
 
 Then `node scripts/guard.js selftest` must exit 0.
 
+> **If you replaced `browsers/claude-in-chrome.json` rather than adding your file next to it**, that
+> command will report failures on a perfectly good swap — and it is telling you something real, so do not
+> ignore it. The selftest matrix and `test/browser.test.js` both exercise the *shipped* adapter by name
+> (`mcp__claude-in-chrome__*`), because a plugin should test the configuration it ships. Update those
+> names to your adapter's, or keep the shipped file and add yours alongside. Adding alongside is the
+> cheaper path: two adapters coexist, and the guard takes the union of their prefixes and tools.
+
 ## Security
 
 The safety model, the residual risks, and the manual end-to-end checklist live in

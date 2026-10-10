@@ -162,3 +162,22 @@ same tool name, which a user adding a second browser could hit. It now does, wit
 no test asserting a README contains a string or a file exists — the DS-1 docs bead took the same position,
 and such a test constrains wording rather than behaviour. `docs/context/*` is untouched: that is the
 workflow's context-refresh phase, per the plan's §11.
+
+### Cross-review (Phase 5.5) — one gap found and fixed
+
+The "Swapping the browser" step 3 told the reader that `node scripts/guard.js selftest` must exit 0, full
+stop. That is wrong for the section's stated action. Simulated by pointing `DEAL_SCOUT_BROWSERS_DIR` at a
+renamed copy of the shipped adapter: a user who **replaces** `browsers/claude-in-chrome.json` gets
+**4 of 36** cases failing (`read_page` under the second prefix → exit 2; three `post` block rows → no
+block) on a swap that is otherwise entirely correct, because the selftest matrix and
+`test/browser.test.js` exercise the *shipped* adapter by name. Only *adding* a second adapter alongside
+the default keeps step 3 green.
+
+The instruction now says so, and says what to do about it — which is not "ignore the failures", since they
+are telling the truth about the config. Fixing the test matrix to be adapter-agnostic was rejected: a
+plugin *should* test the configuration it ships, and a selftest that passes against any registry proves
+less, not more. Adding a browser alongside the default is documented as the cheaper path, because the
+guard takes the union of prefixes and tools.
+
+An independent fresh-context reviewer (the delegated conductor could not run — see br-DS-2-02) confirmed
+this by reproducing it, and found nothing else in this bead's files.
