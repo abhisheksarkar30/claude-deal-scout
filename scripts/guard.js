@@ -1,0 +1,268 @@
+#!/usr/bin/env node
+'use strict';
+
+/**
+ * The guard hook: the deterministic backstop that makes "read-only" mechanical rather than
+ * instructional (R4). A prompt is not a control.
+ *
+ *   node scripts/guard.js pre        # PreToolUse — deny a tool or URL before it runs
+ *   node scripts/guard.js post       # PostToolUse (navigate, tabs_context_mcp) — catch an off-allowlist landing
+ *   node scripts/guard.js selftest   # run the policy matrix; non-zero on any miss
+ *
+ * Everything is scoped to `agent_type === "claude-deal-scout:deal-scout"`, so ordinary Chrome use is
+ * never touched. Any error at all exits 2 — exit 2 is what blocks a tool call, and every *other*
+ * non-zero exit fails open, so the catch below is load-bearing, not decoration.
+ */
+
+const fs = require('node:fs');
+const path = require('node:path');
+
+const { checkTool, checkUrl, loadSites } = require('./policy');
+
+const AGENT_TYPE = 'claude-deal-scout:deal-scout';
+
+/**
+ * Tools whose `tool_input` must carry a `url`; a missing one is a contract violation, not a pass.
+ * `tabs_create_mcp` is deliberately NOT here: it takes no parameters (H5, live-checked), so it opens a
+ * blank tab and the URL is checked on the `navigate` that follows.
+ */
+const URL_BEARING_TOOLS = ['navigate'];
+
+const EXIT_BLOCKED = 2;
+
+/** Bounds on walking a hostile `tool_response`. */
+const MAX_WALK_DEPTH = 20;
+const MAX_URLS = 50;
+
+/** `DEAL_SCOUT_SITES_DIR` overrides the adapter directory. Test seam only — see Review Notes. */
+const SITES_DIR = process.env.DEAL_SCOUT_SITES_DIR || path.join(__dirname, '..', 'sites');
+
+const ALLOW = { code: 0, stdout: '', stderr: '' };
+
+function blocked(reason) {
+  return { code: EXIT_BLOCKED, stdout: '', stderr: `claude-deal-scout guard: ${reason}\n` };
+}
+
+// ---------------------------------------------------------------------------
+// Payload
+// ---------------------------------------------------------------------------
+
+function readPayload() {
+  let raw;
+  try {
+    raw = fs.readFileSync(0, 'utf8');
+  } catch (err) {
+    throw new Error(`could not read the hook payload from stdin: ${err.message}`);
+  }
+  if (String(raw).trim() === '') throw new Error('hook payload on stdin was empty');
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`hook payload on stdin was not valid JSON: ${err.message}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Decisions
+// ---------------------------------------------------------------------------
+
+function evaluatePre(payload, adapters) {
+  const toolName = payload.tool_name;
+  const toolCheck = checkTool(toolName);
+  if (!toolCheck.ok) return blocked(toolCheck.reason);
+
+  const bare = toolCheck.tool;
+  const input = payload.tool_input && typeof payload.tool_input === 'object' ? payload.tool_input : {};
+  const url = input.url;
+
+  if (URL_BEARING_TOOLS.includes(bare) && (typeof url !== 'string' || url === '')) {
+    return blocked(`${bare} was called without a "url" — failing closed`);
+  }
+
+  if (typeof url === 'string' && url !== '') {
+    const urlCheck = checkUrl(url, adapters);
+    if (!urlCheck.ok) return blocked(urlCheck.reason);
+  }
+
+  return ALLOW;
+}
+
+/** Every `http(s)://…` string anywhere in the tool response, bounded in depth and count. */
+function collectUrls(value, out = [], depth = 0) {
+  if (out.length >= MAX_URLS || depth > MAX_WALK_DEPTH) return out;
+  if (typeof value === 'string') {
+    for (const match of value.matchAll(/https?:\/\/[^\s"'<>)\]}]+/g)) {
+      out.push(match[0]);
+      if (out.length >= MAX_URLS) break;
+    }
+    return out;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectUrls(item, out, depth + 1);
+    return out;
+  }
+  if (value && typeof value === 'object') {
+    for (const item of Object.values(value)) collectUrls(item, out, depth + 1);
+  }
+  return out;
+}
+
+function evaluatePost(payload, adapters) {
+  const response = payload.tool_response !== undefined ? payload.tool_response : payload.tool_result;
+
+  for (const url of collectUrls(response)) {
+    const urlCheck = checkUrl(url, adapters);
+    if (!urlCheck.ok) {
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          decision: 'block',
+          reason:
+            `navigation ended on ${url}, which is not on the allowlist (${urlCheck.reason}). ` +
+            'Discard what this page showed and close the tab — a redirect may have taken you somewhere untrusted.',
+        }),
+        stderr: '',
+      };
+    }
+  }
+
+  return ALLOW;
+}
+
+/**
+ * The whole decision, scoping included — so the selftest matrix exercises exactly what a real hook
+ * call exercises. `mode` is `pre` or `post`.
+ */
+function evaluate(mode, payload, adapters) {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('hook payload is not a JSON object');
+  }
+  // Scoped out: every other agent, and every non-deal-scout Chrome call, is left alone (R3).
+  if (payload.agent_type !== AGENT_TYPE) return ALLOW;
+  return mode === 'post' ? evaluatePost(payload, adapters) : evaluatePre(payload, adapters);
+}
+
+/** An unparseable payload, a broken adapter or any other throw must block, not pass. */
+function failClosed(err) {
+  process.stderr.write(`claude-deal-scout guard: ${err && err.message ? err.message : String(err)}\n`);
+  return EXIT_BLOCKED;
+}
+
+// ---------------------------------------------------------------------------
+// Selftest
+// ---------------------------------------------------------------------------
+
+function preCall(toolName, url, agentType = AGENT_TYPE) {
+  const tool_input = url === undefined ? {} : { url };
+  return { agent_type: agentType, hook_event_name: 'PreToolUse', tool_name: toolName, tool_input };
+}
+
+const SELFTEST_CASES = [
+  // Scoping — the guard must be invisible to everything that is not this agent.
+  ['scoped out: another agent gets an otherwise-denied tool', 'pre', preCall('computer', undefined, 'other-plugin:other-agent'), 0],
+  ['scoped out: a denied URL is untouched for another agent', 'pre', preCall('navigate', 'https://evil.example.com/x', 'other-plugin:other-agent'), 0],
+  ['scoped out: a missing agent_type is untouched', 'pre', { hook_event_name: 'PreToolUse', tool_name: 'computer', tool_input: {} }, 0],
+
+  // Allowed reads.
+  ['allow: product page', 'pre', preCall('navigate', 'https://www.amazon.in/dp/B0XXXXXXXX'), 0],
+  ['allow: search page', 'pre', preCall('navigate', 'https://www.flipkart.com/search?q=phone'), 0],
+  ['allow: cart page', 'pre', preCall('navigate', 'https://www.flipkart.com/viewcart'), 0],
+  ['allow: wishlist page', 'pre', preCall('navigate', 'https://www.amazon.in/hz/wishlist/ls'), 0],
+  ['allow: read_page carries no url', 'pre', preCall('read_page'), 0],
+  ['allow: get_page_text carries no url', 'pre', preCall('get_page_text'), 0],
+  ['allow: find carries no url', 'pre', preCall('find'), 0],
+  ['allow: tabs_context_mcp carries no url', 'pre', preCall('tabs_context_mcp'), 0],
+  ['allow: tabs_close_mcp carries no url', 'pre', preCall('tabs_close_mcp'), 0],
+
+  // Denied tools.
+  ['deny: computer', 'pre', preCall('computer'), EXIT_BLOCKED],
+  ['deny: form_input', 'pre', preCall('form_input'), EXIT_BLOCKED],
+  ['deny: javascript_tool', 'pre', preCall('javascript_tool'), EXIT_BLOCKED],
+  ['deny: file_upload', 'pre', preCall('file_upload'), EXIT_BLOCKED],
+  ['deny: upload_image', 'pre', preCall('upload_image'), EXIT_BLOCKED],
+  ['deny: gif_creator', 'pre', preCall('gif_creator'), EXIT_BLOCKED],
+  ['deny: read_console_messages', 'pre', preCall('read_console_messages'), EXIT_BLOCKED],
+  ['deny: read_network_requests (session headers)', 'pre', preCall('read_network_requests'), EXIT_BLOCKED],
+  ['deny: MCP-prefixed javascript_tool', 'pre', preCall('mcp__claude-in-chrome__javascript_tool'), EXIT_BLOCKED],
+
+  // Denied URLs on an allowed tool.
+  ['deny: http scheme', 'pre', preCall('navigate', 'http://www.amazon.in/dp/B0XXXXXXXX'), EXIT_BLOCKED],
+  ['deny: look-alike host', 'pre', preCall('navigate', 'https://evilamazon.in/dp/B0XXXXXXXX'), EXIT_BLOCKED],
+  ['deny: suffix host', 'pre', preCall('navigate', 'https://amazon.in.evil.com/dp/B0XXXXXXXX'), EXIT_BLOCKED],
+  ['deny: add-to-cart path', 'pre', preCall('navigate', 'https://www.amazon.in/gp/cart/add.html'), EXIT_BLOCKED],
+  ['deny: sign-in path', 'pre', preCall('navigate', 'https://www.amazon.in/ap/signin'), EXIT_BLOCKED],
+  ['deny: checkout path', 'pre', preCall('navigate', 'https://www.flipkart.com/checkout/entry'), EXIT_BLOCKED],
+
+  // Fail-closed on a missing url for a URL-bearing tool.
+  ['deny: navigate without a url', 'pre', preCall('navigate'), EXIT_BLOCKED],
+  ['allow: tabs_create_mcp takes no url (blank tab)', 'pre', preCall('tabs_create_mcp'), 0],
+
+  // Post-navigation.
+  ['allow: post on an allowlisted landing', 'post', { agent_type: AGENT_TYPE, tool_name: 'mcp__claude-in-chrome__navigate', tool_response: { url: 'https://www.amazon.in/dp/B0XXXXXXXX' } }, 0],
+  ['deny: post on an off-allowlist landing', 'post', { agent_type: AGENT_TYPE, tool_name: 'mcp__claude-in-chrome__navigate', tool_response: { url: 'https://ad.example.com/promo' } }, 0, true],
+  ['deny: post on a tab listing that shows an off-allowlist tab', 'post', { agent_type: AGENT_TYPE, tool_name: 'mcp__claude-in-chrome__tabs_context_mcp', tool_response: { availableTabs: [{ tabId: 1, url: 'https://ad.example.com/promo' }] } }, 0, true],
+];
+
+function selftest(adapters) {
+  let misses = 0;
+  let count = 0;
+
+  for (const [name, mode, payload, expectedCode, expectBlock] of SELFTEST_CASES) {
+    count += 1;
+    let outcome;
+    try {
+      outcome = evaluate(mode, payload, adapters);
+    } catch (err) {
+      process.stderr.write(`selftest MISS: ${name} — threw: ${err.message}\n`);
+      misses += 1;
+      continue;
+    }
+
+    const blockedAsExpected = expectBlock ? outcome.stdout.includes('"decision":"block"') : true;
+
+    if (outcome.code !== expectedCode || !blockedAsExpected) {
+      process.stderr.write(
+        `selftest MISS: ${name} — expected exit ${expectedCode}${expectBlock ? ' with a block' : ''}, got exit ${outcome.code}\n`,
+      );
+      misses += 1;
+    }
+  }
+
+  if (misses > 0) {
+    process.stderr.write(`selftest FAILED: ${misses} of ${count} cases missed\n`);
+    return 1;
+  }
+  process.stdout.write(`selftest OK: ${count} cases\n`);
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Entry
+// ---------------------------------------------------------------------------
+
+function run(mode) {
+  // Loaded first, deliberately: a broken adapter must fail closed before anything is decided.
+  const adapters = loadSites(SITES_DIR);
+
+  if (mode === 'selftest') return selftest(adapters);
+  if (mode !== 'pre' && mode !== 'post') {
+    throw new Error(`unknown mode "${mode}" (expected pre, post or selftest)`);
+  }
+
+  const outcome = evaluate(mode, readPayload(), adapters);
+  if (outcome.stdout) process.stdout.write(outcome.stdout);
+  if (outcome.stderr) process.stderr.write(outcome.stderr);
+  return outcome.code;
+}
+
+function main() {
+  let code;
+  try {
+    code = run(process.argv[2]);
+  } catch (err) {
+    code = failClosed(err);
+  }
+  process.exit(code);
+}
+
+main();

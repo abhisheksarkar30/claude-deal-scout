@@ -1,0 +1,93 @@
+================================================================================
+evidence-07.txt — br-DS-1-07: H1 (`tools:` frontmatter), H2 reconfirmation
+================================================================================
+
+STATUS: **RUN 2026-10-09 — H1 PASS. H2 reconfirmation: see evidence-03.txt (FAIL).**
+
+On 2026-10-09 the human chose to defer every live-browser verification in this
+plan (beads 03, 04, 07) to one later sitting. Nothing in this bead has touched
+their Chrome, and the subagent has not been run.
+
+What IS verified is static: the agent's frontmatter parses, and its `tools:` list
+contains exactly the seven read-only Chrome tools, all under fully-qualified MCP
+names. That is necessary but not sufficient — it does not establish that the
+platform HONOURS the list.
+
+--------------------------------------------------------------------------------
+H1 — does a subagent's `tools:` frontmatter accept `mcp__claude-in-chrome__*`
+     names, and does it actually restrict the agent?
+--------------------------------------------------------------------------------
+Why it matters: `tools:` is supposed to be an independent second layer beneath
+the guard — the guard is default-deny for tools it MATCHES, but a tool name the
+hook's matcher never sees is a silent gap (R9). If `tools:` does not restrict,
+the guard is the ONLY layer, and any claim of "two independent layers" is false.
+The plan explicitly forbids describing one layer as two (R1/R3).
+
+Procedure (needs the user's Chrome — ASK FIRST)
+  1. Install the plugin from this repo as a local directory marketplace.
+  2. Spawn the `claude-deal-scout:deal-scout` subagent with a trivial requirement.
+  3. Confirm from the transcript that it actually has the Chrome tools it needs.
+  4. Then confirm the negative: that a tool OUTSIDE the seven is not available to
+     it. The cleanest probe is to ask the subagent to call, say, `read_network_requests`
+     or `javascript_tool` — it should not have the tool at all.
+
+Pass  : the subagent can call the seven, and cannot call anything else.
+Fail  : it can call a tool outside the seven (the list was ignored or widened).
+
+If it FAILS:
+  - The `tools:` allowlist is NOT a second layer. Say so plainly in Review Notes
+    and in docs/SECURITY.md (br-DS-1-08), and remove any prose implying two.
+  - The guard's default-deny is then the SOLE control (br-DS-1-03), which makes
+    H4's matcher coverage — that every denied tool name is matched by
+    `mcp__(claude-in-chrome|Claude_Browser)__.*` — load-bearing rather than
+    defence-in-depth. Treat an H4 failure as a blocker, not a note.
+
+--------------------------------------------------------------------------------
+H2 (reconfirmation) — does a `navigate` inside the subagent expose the final URL?
+--------------------------------------------------------------------------------
+br-DS-1-03's evidence-03.txt owns the primary check. Reconfirm it here
+specifically from INSIDE the subagent, because that is the path the `post` hook
+actually guards: the hook fires on the subagent's tool call, not on a main-thread
+one.
+
+Procedure: with the subagent running, have it `navigate` to an allowlisted URL
+that redirects, and inspect the tool response it gets back. Confirm the response
+carries the URL the browser actually landed on, reachable by `collectUrls` in
+scripts/guard.js.
+
+If it FAILS: the post-navigation layer is inert for the subagent path too. Same
+consequence and same caveat as evidence-03.txt — the pre-check and the agent's
+"discard and close" instruction are then the only redirect controls.
+
+--------------------------------------------------------------------------------
+Also confirm by hand while the plugin is loaded
+--------------------------------------------------------------------------------
+These are §5.3's "not covered by any automated test" items, checked by eye only:
+
+- The skill's preflight `node "${CLAUDE_PLUGIN_ROOT}/scripts/guard.js" selftest`
+  exits 0 from inside the installed plugin (it exits 0 in the repo — verified).
+- The skill spawns the subagent in the FOREGROUND and the main thread never
+  drives Chrome. The guard only covers the subagent, so a main-thread Chrome call
+  would bypass the only enforcement layer.
+- The hooks actually fire when the subagent calls a Chrome tool, and do NOT fire
+  for ordinary Chrome use outside that agent (R3).
+- Real-DOM extraction quality on Amazon.in / Flipkart / the history sites, and
+  the whole run end to end. §5.3 is explicit that this is checked by hand with
+  the user's go-ahead and is NOT covered by an automated test.
+- Whether the agent's `mcp__claude-in-chrome__*` server name is the one this
+  build actually uses. The frontmatter names `claude-in-chrome`; the hook matcher
+  also accepts `Claude_Browser`. If the live server is the latter, the `tools:`
+  list will not match and H1 effectively fails for a naming reason.
+================================================================================
+
+--------------------------------------------------------------------------------
+Live results — 2026-10-09 (claude -p --chrome --plugin-dir ., foreground subagent)
+--------------------------------------------------------------------------------
+H1 — PASS. The subagent reported exactly the seven listed tools (tabs_context_mcp, tabs_create_mcp,
+  tabs_close_mcp, navigate, read_page, get_page_text, find). javascript_tool and
+  read_network_requests do not exist for it. The `tools:` list is honoured, so it is a layer below
+  the guard. One run on one build (2.1.287); re-check after an upgrade.
+Server name: the live server is claude-in-chrome, matching the frontmatter.
+H2 from inside the subagent: not separately run; the main-thread result in evidence-03.txt applies
+  (navigate does not report the landing URL).
+Skill preflight, foreground-only spawn and full end-to-end run: NOT run.

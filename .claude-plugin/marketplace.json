@@ -1,0 +1,14 @@
+{
+  "name": "claude-deal-scout",
+  "description": "Read-only shopping research for Amazon.in and Flipkart, with price-history verdicts.",
+  "owner": {
+    "name": "abhisheksarkar30"
+  },
+  "plugins": [
+    {
+      "name": "claude-deal-scout",
+      "source": "./",
+      "description": "Read-only shopping research: best product and best deal for a requirement across Amazon.in and Flipkart, compared against your own wishlist/cart/saved-for-later, plus price-history buy-or-wait verdicts. India only."
+    }
+  ]
+}

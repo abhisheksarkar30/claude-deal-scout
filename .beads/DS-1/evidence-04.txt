@@ -1,0 +1,172 @@
+================================================================================
+evidence-04.txt — br-DS-1-04: H3 site survey, and the sale calendar
+================================================================================
+
+STATUS: **H3 SURVEY PARTIALLY RUN 2026-10-09 (second session) — see "Survey results" at the
+end. Still no history adapter ships: the one site with good data has no URL-addressable lookup.**
+
+On 2026-10-09 the human chose to defer every live-browser verification in this
+plan (beads 03, 04, 07) to one later sitting. The survey described below is a
+browser task — the plan says to do it in the built-in browser pane on public
+pages, never in the user's real Chrome, but it is still live network work and it
+was deferred with the rest.
+
+What DID ship in this bead: `data/sale-calendar.json`, which needs no browser.
+
+CONSEQUENCE, stated plainly rather than left implicit:
+  With no `sites/<history-site>.json` on disk, price history (R10) is INERT.
+  `loadSites` returns the two shop adapters and no history adapter; §3.4 step 4
+  finds no applicable adapter for any candidate, omits the `history` key and adds
+  a "no price history found" gap note; §3.6 takes the summary-stats path and
+  returns `no_signal` for everything. The pipeline degrades correctly and the
+  report says so — it does not invent a pattern — but the buy/wait verdict, which
+  is the point of R10, produces nothing until the survey is done.
+
+--------------------------------------------------------------------------------
+H3 — which public price-history sites cover amazon.in and flipkart, and what do
+     their pages expose WITHOUT a click?
+--------------------------------------------------------------------------------
+Why it matters: the agent cannot click (R4; §4.2 forbids a click-based
+workaround). If a site renders its chart to a canvas and exposes no text, it is
+useless to us no matter how good its data is. This is the highest-risk unverified
+fact in the plan.
+
+Procedure (built-in browser pane, public pages only, no login, no account data)
+  Candidate sites to try, at minimum:
+    - pricehistoryapp.com
+    - buyhatke.com            (India-focused)
+    - pricee.com
+    - smartprix.com           (India-focused)
+    - keepa.com               (may require login for anything useful)
+
+  For each site, for a real amazon.in product URL and a real flipkart product URL:
+  1. Navigate to the site's lookup for that product.
+  2. WITHOUT clicking anything, read the page text.
+  3. Record: site id, the exact lookup URL shape, whether it covers `amazon-in`,
+     whether it covers `flipkart`, and which of these four values the page text
+     actually yields: `current`, `lowest`, `highest`, `average`. Also note
+     whether per-point history is exposed (feeds `points`, which is optional).
+
+Decision rule (§3.4 step 4)
+  - A site is USABLE for a shop only if the page text yields ALL FOUR of
+    `current`, `lowest`, `highest`, `average`. A partial result counts as no data.
+  - If no site is usable for a shop: ship NO history adapter for it. That is a
+    valid outcome, not a failure — record it here and let the pipeline degrade.
+  - Do NOT build a click-based or JS-injection workaround. §4.2 forbids it.
+
+Then author `sites/<history-site>.json`, one file per verified site, as a
+`kind: "history"` adapter:
+  - real `hosts`, `label`, `notes`;
+  - `urls.lookup` built from the product's canonical, query-stripped URL or
+    title — NEVER anything from the user's account (R5; §3.4 step 6);
+  - a TIGHT `allow` list covering product/lookup paths only. `loadSites` will
+    reject the adapter if any allow-regex would also permit a path from the shop
+    deny vocabulary (`add`, `buy`, `checkout`, `signin`, `/ap/`, `/gp/css/`,
+    `payment`, `address`, `order`) — that check exists precisely to stop a
+    history site being able to reach `/buy/confirm` or `/payment/result`;
+  - `covers`: non-empty array of the shop-adapter ids it supports
+    (`"amazon-in"`, `"flipkart"`). A `covers` id that is not a loaded shop
+    adapter is rejected at load.
+
+Verify: `node --test test/adapter.test.js` must still pass — its shipped-adapter
+assertions cover any new file automatically, and the `covers`-id and
+adversarial-path checks run on it. No new test file is needed for this bead.
+
+Record in this file: site id, coverage, exact URL shape, exposed text, and the
+ship/ship-none decision with its reason.
+
+--------------------------------------------------------------------------------
+data/sale-calendar.json — SHIPPED
+--------------------------------------------------------------------------------
+Authored 2026-10-09. Eight approximate Indian sale windows (Republic Day, Holi,
+Summer, Prime Day, Independence Day, Great Indian Festival / Big Billion Days,
+Diwali / Dhanteras, Year End), each with the months it spans and a note saying it
+is approximate and shifts year to year.
+
+Format is the array `history.js` `loadSaleCalendar` consumes: entries of
+`{ name, months: number[] }`, where `months` is 1-12. Extra keys (`note`) are
+ignored by the overlap test, which is `saleCalendar.find(w =>
+w.months.includes(dipMonth))`.
+
+These are "typical" windows, not announced dates — `history.js` labels them that
+way in its output, and confidence in the next-dip estimate depends on whether one
+of them overlaps the predicted low month. The file is data precisely so a wrong
+or moved window is corrected by editing JSON, with no code change (R8).
+
+--------------------------------------------------------------------------------
+Survey results — 2026-10-09, built-in browser pane, public pages, no login, no clicks
+--------------------------------------------------------------------------------
+Judged with the agent's own tools (read_page / get_page_text), not page-script inspection.
+Form/robots/sitemap checks used one-off page-script reads for the survey only.
+
+pricehistoryapp.com  — DATA: PASS. LOOKUP: FAIL.
+  Coverage: Amazon India, Flipkart (and Myntra, Croma, Vijaysales cross-store prices).
+  Product page shape: /product/<site-internal-slug>  (e.g. .../product/samsung-galaxy-s25-ultra-...)
+  read_page on a product page exposes, as plain text, ALL FOUR values:
+    current        "Current: ₹84,999"
+    lowest         "All-time Low ₹84,744"  (also "All-time low: ... ₹84,744")
+    highest        "All-time high ... ₹1,29,999"
+    average        "30d Average ₹95,588"   <-- a 30-DAY average, not all-time. Different
+                   meaning from `average` in §3.6 history.js; must be labelled or mapped.
+  Per-point history: NOT exposed. The chart yields axis labels only (₹85k.., 25 Aug, 21 Sept,
+  7 Oct, 9 Oct) -> `points` stays absent; summary-stats path only (low confidence by design).
+  History length is shown ("598 days of history", "Last checked 9 Oct 2026").
+  get_page_text alone returned only an <article> fragment (one line); read_page is required.
+  Third-party verdicts on the page ("Deal Score 96%", "Buy signal", "Good time to buy?") are
+  untrusted site opinions and MUST NOT be passed through as our verdict.
+  LOOKUP: the "paste a product link" form is client-side JS (form has no action, unnamed input).
+    /search?q=...        -> 404
+    /?url=<amazon url>   -> just the homepage
+    sitemap (100 URLs)   -> no ASIN in any URL
+  So a product page cannot be addressed from an amazon.in / flipkart URL or a title. The slug is
+  site-internal. Reaching a product would mean typing into the form (forbidden) or walking the
+  site's category / deals listing pages and matching by title (brittle; covers only products the
+  site already lists). robots.txt: Disallow /api/, /sign-in, /sign-up, /forgot-password,
+  /delete-account only; product pages are permitted.
+
+pricebefore.com (www.)  — EXCLUDED.
+  Has a GET search at /search/?q=<text> (category + q), which WOULD give an addressable lookup,
+  but its robots.txt says "User-agent: * Disallow: /search/" (also /api/, /redirect/,
+  /category/filters/, /product/update/). Using /search/ would ignore the site's stated policy, so
+  it is not used (R7: respect bot signals). Product-page contents were not examined.
+
+NOT SURVEYED this session: pricee.com (home page is a generic comparison page, no history
+  evidence seen), buyhatke.com (JS marketing page; no lookup URL found on home), smartprix.com,
+  keepa.com. Unknown, not rejected.
+
+DECISION (this session): ship NO history adapter. Reason: the only site whose data passes the
+four-value rule cannot be reached from a product URL or title without typing, and the only
+addressable search found is disallowed by its robots.txt. Writing a template like
+https://pricehistoryapp.com/product/{slug} would be inventing a URL the agent cannot construct.
+
+OPEN QUESTION FOR THE HUMAN (changes the design, so not decided here):
+  (a) Accept pricehistoryapp.com via listing-page discovery (agent navigates /deals/store/<shop>
+      or a category page and `find`s the product by title) -- partial coverage, new §3.3 field
+      for a "browse" lookup, plan change needed; or
+  (b) Survey the remaining candidates (smartprix, buyhatke, pricee, keepa) for a robots-permitted
+      addressable lookup first; or
+  (c) Leave R10 inert and ship; the pipeline already degrades to `no_signal` with a gap note.
+  Also decide how `average` maps: pricehistoryapp's is a 30-day average.
+================================================================================
+
+--------------------------------------------------------------------------------
+Survey results, part 2 — 2026-10-09, robots.txt + curl only (NO rendered-page check)
+--------------------------------------------------------------------------------
+The built-in browser pane was unavailable (auto-mode classifier outage), so these are HTTP-level
+findings. They say nothing yet about what a rendered page exposes without a click.
+
+buyhatke.com   robots.txt: "User-agent: *  Allow: /", disallows /api/, /redirect/, /webview/ only.
+               Product/search pages are permitted. /search?q=<text> returns 200 (293 KB SPA shell),
+               no price-stat text in the server HTML. Whether the rendered page yields
+               current/lowest/highest/average is UNKNOWN. Best remaining candidate: robots-permitted
+               and it has a GET search.
+keepa.com      robots.txt: only /r/, /ajax/ disallowed. Product lookup is a hash route
+               (keepa.com/#!product/10-<ASIN>, domain 10 = amazon.in), so it IS addressable from an
+               ASIN, but the page is a JS app (8 KB shell) and useful data is login/paid and
+               chart-drawn. Likely fails the four-value text rule; UNVERIFIED. Covers amazon.in only.
+smartprix.com  robots.txt is permissive for generic agents but a plain GET of /search returns 403
+               (bot protection). Treated as EXCLUDED (R7: respect bot signals).
+pricee.com     no robots.txt (404 from storage). No history evidence found; not examined further.
+
+DECISION: still no history adapter shipped. Next step is rendered-page reads of buyhatke and keepa in
+the built-in browser, then the human's call on pricehistoryapp listing-page discovery vs leaving R10 inert.
