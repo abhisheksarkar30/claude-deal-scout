@@ -225,3 +225,82 @@ test('post allows a response that carries no URL at all', () => {
   assert.equal(result.code, 0);
   assert.equal(result.stdout, '');
 });
+
+test('post does not scan a tool the registry does not land-check', () => {
+  // read_page's response IS the page, and a real product page is full of third-party links. The
+  // matcher now fires on every MCP call, so without the registry's landing_check gate this would
+  // block every read.
+  const { tool_name, ...rest } = post({ content: 'Reviews mention https://ad.example.com/promo' });
+  const result = run('post', { ...rest, tool_name: 'mcp__claude-in-chrome__read_page' });
+  assert.equal(result.code, 0);
+  assert.equal(result.stdout, '');
+});
+
+// ---------------------------------------------------------------------------
+// The browser registry
+// ---------------------------------------------------------------------------
+
+test('a broken browser registry fails closed', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-browsers-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'bad.json'), '{ not json at all');
+    assert.equal(run('pre', pre('navigate', 'https://www.amazon.in/dp/B0XXXXXXXX'), { env: { DEAL_SCOUT_BROWSERS_DIR: dir } }).code, 2);
+
+    // Valid JSON, invalid adapter: the landing_check entry is not in allow.
+    fs.writeFileSync(
+      path.join(dir, 'bad.json'),
+      JSON.stringify({
+        id: 'x',
+        label: 'x',
+        prefixes: ['mcp__x__'],
+        allow: ['read_page'],
+        url_bearing: [],
+        landing_check: ['navigate'],
+      }),
+    );
+    assert.equal(run('pre', pre('read_page'), { env: { DEAL_SCOUT_BROWSERS_DIR: dir } }).code, 2);
+
+    assert.equal(run('pre', pre('read_page'), { env: { DEAL_SCOUT_BROWSERS_DIR: path.join(dir, 'nope') } }).code, 2);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a broken registry fails closed in scope but leaves another agent_type untouched', () => {
+  // The matcher fires on every MCP call session-wide, so the scope gate has to run *before* either
+  // registry is read — otherwise a broken adapter file here would block an unrelated session.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-browsers-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'bad.json'), '{ not json at all');
+    const env = { DEAL_SCOUT_BROWSERS_DIR: dir };
+    assert.equal(run('pre', pre('read_page'), { env }).code, 2);
+    assert.equal(run('pre', pre('read_page', undefined, 'other-plugin:other'), { env }).code, 0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a configured browser is stripped and judged, and an unconfigured server is still denied', () => {
+  assert.equal(run('pre', pre('mcp__Claude_Browser__read_page')).code, 0);
+  assert.equal(run('pre', pre('mcp__Claude_Browser__javascript_tool')).code, 2);
+  assert.equal(run('pre', pre('mcp__some-other-server__navigate', 'https://www.amazon.in/dp/B0XXXXXXXX')).code, 2);
+});
+
+// ---------------------------------------------------------------------------
+// The agent-type scope seam
+// ---------------------------------------------------------------------------
+
+test('DEAL_SCOUT_AGENT_TYPE moves the scope, and the default is unchanged when it is unset', () => {
+  const payload = pre('javascript_tool', undefined, 'other-plugin:other');
+
+  // Unset: the other agent's denied tool is untouched, as the scoping test above pins.
+  assert.equal(run('pre', payload).code, 0);
+
+  // Set: the guard now judges that agent — which means a denied tool is denied.
+  const scoped = run('pre', payload, { env: { DEAL_SCOUT_AGENT_TYPE: 'other-plugin:other' } });
+  assert.equal(scoped.code, 2);
+  assert.match(scoped.stderr, /guard:/);
+
+  // ...and the plugin's own agent is no longer in scope.
+  assert.equal(run('pre', pre('javascript_tool'), { env: { DEAL_SCOUT_AGENT_TYPE: 'other-plugin:other' } }).code, 0);
+});

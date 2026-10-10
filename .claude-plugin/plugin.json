@@ -1,6 +1,6 @@
 {
   "name": "claude-deal-scout",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Read-only shopping research: best product and best deal for a requirement across Amazon.in and Flipkart, compared against your own wishlist/cart/saved-for-later, plus price-history buy-or-wait verdicts. India only.",
   "author": {
     "name": "abhisheksarkar30"

@@ -6,12 +6,18 @@
  * instructional (R4). A prompt is not a control.
  *
  *   node scripts/guard.js pre        # PreToolUse — deny a tool or URL before it runs
- *   node scripts/guard.js post       # PostToolUse (navigate, tabs_context_mcp) — catch an off-allowlist landing
+ *   node scripts/guard.js post       # PostToolUse — catch an off-allowlist landing
  *   node scripts/guard.js selftest   # run the policy matrix; non-zero on any miss
  *
- * Everything is scoped to `agent_type === "claude-deal-scout:deal-scout"`, so ordinary Chrome use is
- * never touched. Any error at all exits 2 — exit 2 is what blocks a tool call, and every *other*
- * non-zero exit fails open, so the catch below is load-bearing, not decoration.
+ * Everything is scoped to `agent_type === AGENT_TYPE`, so no other agent's calls are touched. The
+ * hook matchers for both events are `mcp__.*`, and *this* file is the policy: which tools may be
+ * called, which must carry a `url`, and which responses are scanned for a landing all come from
+ * `browsers/*.json`. The matcher cannot narrow that, which is deliberate — a matcher naming one
+ * vendor's server is a matcher that silently stops applying the moment a different browser is
+ * configured (R2).
+ *
+ * Any error at all exits 2 — exit 2 is what blocks a tool call, and every *other* non-zero exit
+ * fails open, so the catch below is load-bearing, not decoration.
  */
 
 const fs = require('node:fs');
@@ -19,14 +25,27 @@ const path = require('node:path');
 
 const { checkTool, checkUrl, loadBrowsers, loadSites } = require('./policy');
 
-const AGENT_TYPE = 'claude-deal-scout:deal-scout';
+/**
+ * `DEAL_SCOUT_AGENT_TYPE` overrides the scope. Portability seam, not a knob — see Review Notes.
+ * The default is the plugin-namespaced name Claude Code synthesises for this subagent.
+ */
+const AGENT_TYPE = process.env.DEAL_SCOUT_AGENT_TYPE || 'claude-deal-scout:deal-scout';
+
+/** Is `bare` a tool whose `tool_input` must carry a `url`, per the loaded browsers? */
+function isUrlBearing(bare, browsers) {
+  return browsers.some((b) => b.url_bearing.includes(bare));
+}
 
 /**
- * Tools whose `tool_input` must carry a `url`; a missing one is a contract violation, not a pass.
- * `tabs_create_mcp` is deliberately NOT here: it takes no parameters (H5, live-checked), so it opens a
- * blank tab and the URL is checked on the `navigate` that follows.
+ * Is `bare` a tool whose response must be scanned for an off-allowlist landing?
+ *
+ * Deliberately a separate question from the allow set, and not answered by the matcher. The
+ * page-text tools are allowed but not landing-checked: their response *is* the page, and a real
+ * product page is full of third-party links, so scanning them would block every read.
  */
-const URL_BEARING_TOOLS = ['navigate'];
+function isLandingChecked(bare, browsers) {
+  return browsers.some((b) => b.landing_check.includes(bare));
+}
 
 const EXIT_BLOCKED = 2;
 
@@ -78,7 +97,9 @@ function evaluatePre(payload, adapters, browsers) {
   const input = payload.tool_input && typeof payload.tool_input === 'object' ? payload.tool_input : {};
   const url = input.url;
 
-  if (URL_BEARING_TOOLS.includes(bare) && (typeof url !== 'string' || url === '')) {
+  // tabs_create_mcp is deliberately not url_bearing: it takes no parameters (H5, live-checked), so
+  // it opens a blank tab and the URL is checked on the navigate that follows.
+  if (isUrlBearing(bare, browsers) && (typeof url !== 'string' || url === '')) {
     return blocked(`${bare} was called without a "url" — failing closed`);
   }
 
@@ -110,7 +131,14 @@ function collectUrls(value, out = [], depth = 0) {
   return out;
 }
 
-function evaluatePost(payload, adapters) {
+function evaluatePost(payload, adapters, browsers) {
+  // The matcher fires on every MCP tool call, so gate here before scanning: only a landing-checked
+  // tool's response is worth reading, and a tool outside the allow set is the `pre` hook's problem,
+  // not this one's. Without this gate, `read_page`'s page text — full of third-party links — would
+  // block every read.
+  const toolCheck = checkTool(payload.tool_name, browsers);
+  if (!toolCheck.ok || !isLandingChecked(toolCheck.tool, browsers)) return ALLOW;
+
   const response = payload.tool_response !== undefined ? payload.tool_response : payload.tool_result;
 
   for (const url of collectUrls(response)) {
@@ -142,7 +170,7 @@ function evaluate(mode, payload, adapters, browsers) {
   }
   // Scoped out: every other agent, and every non-deal-scout Chrome call, is left alone (R3).
   if (payload.agent_type !== AGENT_TYPE) return ALLOW;
-  return mode === 'post' ? evaluatePost(payload, adapters) : evaluatePre(payload, adapters, browsers);
+  return mode === 'post' ? evaluatePost(payload, adapters, browsers) : evaluatePre(payload, adapters, browsers);
 }
 
 /** An unparseable payload, a broken adapter or any other throw must block, not pass. */
@@ -204,6 +232,15 @@ const SELFTEST_CASES = [
   ['allow: post on an allowlisted landing', 'post', { agent_type: AGENT_TYPE, tool_name: 'mcp__claude-in-chrome__navigate', tool_response: { url: 'https://www.amazon.in/dp/B0XXXXXXXX' } }, 0],
   ['deny: post on an off-allowlist landing', 'post', { agent_type: AGENT_TYPE, tool_name: 'mcp__claude-in-chrome__navigate', tool_response: { url: 'https://ad.example.com/promo' } }, 0, true],
   ['deny: post on a tab listing that shows an off-allowlist tab', 'post', { agent_type: AGENT_TYPE, tool_name: 'mcp__claude-in-chrome__tabs_context_mcp', tool_response: { availableTabs: [{ tabId: 1, url: 'https://ad.example.com/promo' }] } }, 0, true],
+
+  // The second configured prefix, on both the allow path and the deny path.
+  ['allow: a read_page under the second configured prefix is stripped and allowed', 'pre', preCall('mcp__Claude_Browser__read_page'), 0],
+  ['deny: a non-allow-set tool under the second configured prefix', 'pre', preCall('mcp__Claude_Browser__javascript_tool'), EXIT_BLOCKED],
+  ['deny: post landing under the second configured prefix', 'post', { agent_type: AGENT_TYPE, tool_name: 'mcp__Claude_Browser__navigate', tool_response: { url: 'https://ad.example.com/promo' } }, 0, true],
+
+  // The landing-check gate (browsers/*.json `landing_check`). This row is the whole reason the gate
+  // exists: read_page's response is the page itself, so a link-dense page must pass unscanned.
+  ['allow: a page-text tool response full of off-allowlist URLs is not scanned', 'post', { agent_type: AGENT_TYPE, tool_name: 'mcp__claude-in-chrome__read_page', tool_response: 'Reviews mention https://ad.example.com/promo and https://tracker.example.net/x' }, 0],
 ];
 
 function selftest(adapters, browsers) {
@@ -221,7 +258,12 @@ function selftest(adapters, browsers) {
       continue;
     }
 
-    const blockedAsExpected = expectBlock ? outcome.stdout.includes('"decision":"block"') : true;
+    // A row that does not ask for a block asserts the *absence* of one. Without that, an
+    // allow-expected `post` row cannot fail: `evaluatePost` reports a block as `{"decision":"block"}`
+    // on exit 0, which is the same exit code as a pass, so only stdout can tell them apart.
+    const blockedAsExpected = expectBlock
+      ? outcome.stdout.includes('"decision":"block"')
+      : !outcome.stdout.includes('"decision":"block"');
 
     if (outcome.code !== expectedCode || !blockedAsExpected) {
       process.stderr.write(
@@ -244,16 +286,27 @@ function selftest(adapters, browsers) {
 // ---------------------------------------------------------------------------
 
 function run(mode) {
-  // Loaded first, deliberately: a broken adapter must fail closed before anything is decided.
-  const adapters = loadSites(SITES_DIR);
-  const browsers = loadBrowsers(BROWSERS_DIR);
-
-  if (mode === 'selftest') return selftest(adapters, browsers);
+  if (mode === 'selftest') {
+    // Loads both registries unconditionally and reads no payload: a broken adapter must surface
+    // here rather than being masked by the scope gate below.
+    return selftest(loadSites(SITES_DIR), loadBrowsers(BROWSERS_DIR));
+  }
   if (mode !== 'pre' && mode !== 'post') {
     throw new Error(`unknown mode "${mode}" (expected pre, post or selftest)`);
   }
 
-  const outcome = evaluate(mode, readPayload(), adapters, browsers);
+  const payload = readPayload();
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('hook payload is not a JSON object');
+  }
+
+  // Scoped out *before* either registry is read. The matcher now fires on every MCP tool call in
+  // the session, so a broken sites/ or browsers/ file must not be able to block a call that has
+  // nothing to do with this agent. `evaluate` keeps its own scope check for the selftest matrix,
+  // whose scoping rows expect a decision rather than an early return.
+  if (payload.agent_type !== AGENT_TYPE) return 0;
+
+  const outcome = evaluate(mode, payload, loadSites(SITES_DIR), loadBrowsers(BROWSERS_DIR));
   if (outcome.stdout) process.stdout.write(outcome.stdout);
   if (outcome.stderr) process.stderr.write(outcome.stderr);
   return outcome.code;

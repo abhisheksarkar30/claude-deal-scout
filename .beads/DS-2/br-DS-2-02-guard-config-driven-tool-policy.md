@@ -9,7 +9,7 @@ are stable at `f0e9109`.
 
 - **Bead ID**: br-DS-2-02
 - **Priority**: P0 (critical — the only bead that changes runtime behaviour)
-- **Status**: pending
+- **Status**: done
 - **Original Estimate**: 2-2.5h
 - **Dependencies**: br-DS-2-01
 - **Blocks**: br-DS-2-03
@@ -187,4 +187,55 @@ the registry's `landing_check`. You cannot land half of it and have a working gu
 
 ## Review Notes
 
-_Appended at implementation, not at beadify time._
+**What was built.** `URL_BEARING_TOOLS` is gone, replaced by `isUrlBearing(bare, browsers)`; a new
+`isLandingChecked(bare, browsers)` gates `evaluatePost`, which now takes `browsers` and returns
+`ALLOW` unless the tool is in the registry's `landing_check`. `AGENT_TYPE` reads
+`DEAL_SCOUT_AGENT_TYPE` with the old literal as its default. `run()` handles `selftest` first (it
+still loads both registries and reads no payload), then for `pre`/`post` reads the payload, checks it
+is an object, and returns 0 for an out-of-scope `agent_type` **before** either registry is loaded —
+so a broken `sites/` or `browsers/` cannot block an unrelated session's MCP calls now that the
+matcher fires on all of them. The header JSDoc was rewritten: it had described `post` as matching
+`navigate, tabs_context_mcp` and claimed ordinary Chrome use is never touched, both of which this
+bead falsifies. Both `hooks.json` matchers are `mcp__.*` and the file's `description` now says what
+is actually true, rather than that the guard never affects ordinary Claude in Chrome use.
+
+**The landing-check gate is the load-bearing change**, and it is the reason the `read_page`
+false-block does not happen: the response of a page-text tool *is* the page. Without the gate the
+matcher change would have turned every product page into a block. `isLandingChecked` is written as a
+separate question from the allow set on purpose — they must not drift together.
+
+**Deviation.** None from the bead as written. Two judgement calls worth naming: (1) `evaluatePost`
+returns `ALLOW` for a tool `checkTool` rejects rather than blocking — a tool outside the allow set is
+`pre`'s job, and `post` is a landing check, not a second allowlist; (2) the harness change was
+applied exactly as §3.2 specifies, in the same commit as the rows that depend on it.
+
+**Verification observed.**
+- `npm test` → `tests 121 / pass 121 / fail 0` (was 116 after br-DS-2-01; 5 new guard cases).
+- `node scripts/guard.js selftest` → `selftest OK: 36 cases`, exit 0 (was 32; the four new rows).
+- Every pre-existing selftest row and every pre-existing `test/guard.test.js` case still passes
+  untouched. That is the regression guarantee: the default registry reproduces the old behaviour.
+
+**Negative control (plan §5.4, first) — run, and it failed as required.** Reverted the gate to
+`if (!toolCheck.ok) return ALLOW;` (dropping the `landing_check` half). Result:
+`selftest MISS: allow: a page-text tool response full of off-allowlist URLs is not scanned — expected
+exit 0, got exit 0`, then `selftest FAILED: 1 of 36 cases missed`, exit 1. The `expected exit 0, got
+exit 0` in that message is the whole point of the harness change: the failure is a `{"decision":
+"block"}` on stdout with an unchanged exit code, which the old harness could not see. Restored the
+gate, re-ran: `36 cases`, `121/121`.
+
+**The live `mcp__.*` matcher check was NOT performed — stated plainly, not glossed.** This session
+has no `mcp__claude-in-chrome__*` tools bound, so there was no live session to drive an allowlisted
+and a denied call through. The plan's §5.3 already classes this as unverifiable by any test in this
+repo; it stays unverified here, and it is the one item in this bead whose evidence is absent rather
+than green.
+
+**Operational consequence, for the PR body.** `hooks.json` is read by the harness from the
+*installed* plugin copy, so these matcher changes do not take effect until
+`claude plugin update claude-deal-scout@claude-deal-scout` plus a reload. The `plugin.json` version
+bump in this bead (0.1.4) is what makes that update pick the change up — without it the cached copy
+would keep the old vendor-scoped matchers, and the guard would silently not run for the tools this
+story exists to make pluggable.
+
+**Deliberately not done here.** No `docs/context/*` or `docs/SECURITY.md` edit — those are br-DS-2-03
+and the context-refresh phase respectively. The `$CLAUDE_PLUGIN_ROOT` in the hook commands is
+untouched.
