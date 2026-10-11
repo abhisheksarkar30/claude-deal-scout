@@ -71,6 +71,22 @@ function historyEntry(over = {}) {
   };
 }
 
+function reviewEntry(over = {}) {
+  return {
+    file: 'rev.json',
+    data: {
+      id: 'rev',
+      kind: 'review',
+      label: 'Review Site',
+      hosts: ['rev.example'],
+      allow: ['^/product/[^/]+$'],
+      urls: { lookup: 'https://rev.example/product/{id}' },
+      covers: ['shop-a'],
+      ...over,
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // history adapters must not reach mutating paths
 // ---------------------------------------------------------------------------
@@ -109,6 +125,41 @@ test('a history adapter covering an unknown shop adapter id is rejected at load'
 test('a history adapter needs a non-empty covers array', () => {
   assert.throws(() => validateSites([shopEntry('shop-a'), historyEntry({ covers: [] })]), /covers/);
   const withoutCovers = historyEntry();
+  delete withoutCovers.data.covers;
+  assert.throws(() => validateSites([shopEntry('shop-a'), withoutCovers]), /covers/);
+});
+
+// ---------------------------------------------------------------------------
+// review adapters inherit every history guarantee
+// ---------------------------------------------------------------------------
+
+test('a synthetic kind: "review" adapter loads', () => {
+  const sites = validateSites([shopEntry('shop-a'), reviewEntry()]);
+  const review = sites.find((s) => s.kind === 'review');
+  assert.equal(review.id, 'rev');
+  assert.deepEqual(review.covers, ['shop-a']);
+});
+
+test('a review adapter with an overbroad allow (^/.*$) is rejected at load', () => {
+  assert.throws(() => validateSites([shopEntry('shop-a'), reviewEntry({ allow: ['^/.*$'] })]), /mutating path/);
+});
+
+test('a review adapter whose covers names an unknown shop id is rejected', () => {
+  // This is the case that pins the second whole-set gate: without it the typo'd id would load.
+  assert.throws(
+    () => validateSites([shopEntry('shop-a'), reviewEntry({ covers: ['shop-a', 'nope'] })]),
+    /not a loaded shop adapter/,
+  );
+  assert.throws(() => validateSites([reviewEntry({ covers: ['shop-a'] })]), /not a loaded shop adapter/);
+});
+
+test('a review adapter missing urls.lookup is rejected', () => {
+  assert.throws(() => validateSites([shopEntry('shop-a'), reviewEntry({ urls: {} })]), /urls\.lookup/);
+});
+
+test('a review adapter needs a non-empty covers array', () => {
+  assert.throws(() => validateSites([shopEntry('shop-a'), reviewEntry({ covers: [] })]), /covers/);
+  const withoutCovers = reviewEntry();
   delete withoutCovers.data.covers;
   assert.throws(() => validateSites([shopEntry('shop-a'), withoutCovers]), /covers/);
 });

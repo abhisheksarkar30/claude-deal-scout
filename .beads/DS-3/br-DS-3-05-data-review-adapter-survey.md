@@ -10,7 +10,7 @@ pre-flight decision: the live check runs in this story), §4.1/§4.2, §8 (this 
 - **Bead ID**: br-DS-3-05
 - **Priority**: P1 (high — off-site reach is R3's "beyond the site" half; the kind is in scope, the
   shipped host is survey-gated)
-- **Status**: pending
+- **Status**: done
 - **Original Estimate**: 1.5–2h (the four policy edits + tests, then the survey)
 - **Dependencies**: br-DS-3-01
 - **Blocks**: None
@@ -136,6 +136,61 @@ already enforce.
 
 ## Review Notes
 
-*(Append-only. The implementer records here, when the bead is done: what was built, any justified
-deviation from the bead or the plan, the H8 survey outcome — including "none qualified" or "deferred" —
-and anything deliberately left undone. Not written at beadify time.)*
+**Done — the `review` kind shipped, and the survey's answer is "none qualified". That is the bead's
+expected outcome, not a failure.** `.beads/DS-3/evidence-05.txt` carries the full H8 record.
+
+**The kind — exactly the four edit sites the bead named, all in `scripts/policy.js`:** `REQUIRED_URLS`
+gains `review: ['lookup']`; the kind check accepts `"review"`; the `kind === 'history'` capture block
+becomes `kind !== 'shop'`; and the whole-set gate at the old `:271` becomes
+`if (adapter.kind === 'shop') continue;`. A `review` adapter therefore inherits the non-empty-`covers`
+rule and the adversarial-path rejection unchanged, and — because the gate now admits it — a `covers`
+entry naming a typo'd shop id is rejected instead of loading cleanly. **Completeness verified, not
+assumed:** `grep` over `scripts/` for every kind string finds only these three sites plus the kind
+check, and no `.kind` branch anywhere in `guard.js` (it reaches `policy.js` only through `checkUrl`,
+which applies every adapter's `allow` regardless of kind — which is exactly why the reachable host set
+widens only if an adapter ships, §3.8).
+
+**One naming change beyond the four sites, behaviour-neutral:** the `historyFiles` map is now
+`coveredFiles`, since it holds any non-shop adapter's file and a name saying `history` while holding a
+`review` adapter is the kind of thing the next reader trusts and shouldn't. The two check messages now
+interpolate `${kind}` rather than hard-coding "a history adapter", for the same reason. Both are
+provably behaviour-preserving: the existing tests assert on `/covers/`, `/mutating path/` and
+`/not a loaded shop adapter/`, never on the full string.
+
+**Verified:** `npm test` **175 pass / 0 fail** (170 after bead 04 + 5 new `review` cases);
+`node scripts/guard.js selftest` still prints **`selftest OK: 60 cases`** — the load-bearing check for
+this bead, since `policy.js` is the guard's only import and this is the evidence that the four edits
+left every guard decision unchanged.
+
+**H8 survey — decision: ship NO `sites/<review-site>.json`.** Same browser-pane limitation as bead 04,
+so the rendered-text half is unverified; but the blockers are mostly decisive on their own. Plain
+`curl`, no User-Agent spoofing:
+
+- **gsmarena.com** — robots.txt disallows `ClaudeBot`, `anthropic-ai`, `GPTBot`, `CCBot` with
+  `Disallow: /`. Disqualified on policy, and fails addressability independently (site-internal `-<id>`).
+- **trustpilot.com** — lists `anthropic-ai` among its disallows, and indexes businesses by domain, not
+  products: no product-level lookup exists to build.
+- **mouthshut.com** — connection reset (HTTP 000). Excluded as unreachable, the way DS-1 treated
+  smartprix's 403.
+- **91mobiles.com** — robots.txt **permits** it for a generic agent (no AI block; only `008` and
+  `Baiduspider` get a blanket deny), and the URL shape looks constructible from brand+model — but all
+  three constructed lookups returned **HTTP 403** bot pages. **This one is different in kind:** it is
+  robots-permitted and blocks only non-browser clients, so it is *unverified*, not rejected. I did not
+  ship a template for it because that would be inventing a URL shape not shown to resolve — the same
+  mistake DS-1 refused with `pricehistoryapp.com/product/{slug}`, and the 403s do not even confirm the
+  slug pattern.
+
+The `offsite` seam built in beads 02/03 is correct and simply never fires; cross-marketplace
+corroboration on `product_key` carries R3's "beyond the site" half with zero new hosts, so R5's
+residual is unchanged. Shipping the kind rather than a host means a source that later qualifies is a
+**data change** with no code edit.
+
+**Not done, deliberately.** No `sites/<review-site>.json` (the survey found none). No test for the
+survey decision — §5.3 says the ship/no-ship call is not machine-checkable, and any adapter that did
+ship would be covered automatically by the existing shipped-adapter assertions, so no new test file is
+needed.
+
+**Open for the human**, alongside H6/H7: in a real browser pane, check 91mobiles' constructed lookup
+for a real product — does it resolve, and does the rendered page expose a rating and count as text with
+no click? Both hold → one data file ships; either fails → "none qualified" is final. Its robots.txt
+already permits the read, so those two questions are all that remain.

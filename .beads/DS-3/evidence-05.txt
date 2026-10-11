@@ -130,3 +130,76 @@ OPEN FOR THE HUMAN — the one item this story could not close:
                                 already gives us the brand).
   Until then, treat the four H6 claims as untested assumptions of the extraction prompt.
 ================================================================================
+
+================================================================================
+H8 — br-DS-3-05: does SOME third-party review source pass all three of an addressable
+     lookup, a rating/count readable as text without a click, and a permitting robots.txt?
+================================================================================
+STATUS: **SURVEY RUN 2026-10-11 at the HTTP/robots level. DECISION: SHIP NO `review` ADAPTER.**
+Same browser-pane limitation as H6/H7 above, so the rendered-text half is unverified — but here the
+blockers are mostly decisive on their own. No User-Agent spoofing: every fetch is a plain `curl`.
+
+The rule being applied, from the plan and the DS-1 precedent: a source qualifies only if a lookup can
+be **built from a product's public URL or title** (the agent cannot type into a form and cannot click),
+its **rating/count are exposed as text without a click**, and its **robots.txt permits** the read. A
+robots-disallowed or bot-blocked source is a "no", not a workaround.
+
+CANDIDATE 1 — gsmarena.com (phone reviews; URL-shape `/<brand>_<model>-<id>.php`)
+  robots.txt: HTTP 200, 2053 bytes. **DISQUALIFIED.** It carries a blanket `Disallow: /` for
+  `GPTBot`, **`ClaudeBot`**, `CCBot` and **`anthropic-ai`**. Reading it as this agent is against the
+  site's stated policy, exactly as for amazon.in in H6. Also fails requirement 1 independently: the
+  `-<id>` in the URL is site-internal, so the lookup is not constructible from a title.
+
+CANDIDATE 2 — trustpilot.com
+  robots.txt: HTTP 200, 25101 bytes. **DISQUALIFIED, twice over.** It lists `anthropic-ai` (and
+  `Applebot-Extended`, `ImagesiftBot`, `Omgilibot`, `Yandex`, …) among its disallows; and it indexes
+  **businesses by domain, not products**, so there is no product-level lookup to build at all.
+
+CANDIDATE 3 — mouthshut.com (India-specific product reviews)
+  **EXCLUDED — unreachable.** `curl` gets a connection reset (`Recv failure: Connection was reset`,
+  HTTP 000) for its robots.txt; no response was obtained. Treated the same way DS-1 treated
+  smartprix's 403: respect the signal, do not probe around it.
+
+CANDIDATE 4 — 91mobiles.com (India; prices, specs and user ratings; URL shape
+              `/<brand>-<model>-price-in-india`)
+  robots.txt: HTTP 200, 3553 bytes. **PERMITTED for a generic agent** — no AI-agent block at all
+  (the only blanket `Disallow: /` entries are for `008` and `Baiduspider`). Product and price pages
+  are not disallowed; what IS disallowed is `/forum/`, `/answers/`, `/video/`, `/api_mobile`,
+  `/directory/`, `/articles/`, `/photos/` and `/*viewReviewComments`.
+  **BUT every constructed lookup returned HTTP 403**, a uniform 5486-byte bot-block page:
+    /samsung-galaxy-s24-price-in-india        -> 403
+    /samsung-galaxy-s24-ultra-price-in-india  -> 403
+    /apple-iphone-15-price-in-india           -> 403
+  So requirement 1 could not be confirmed. **This one is different in kind from candidates 1–2**: its
+  robots.txt *permits* the read and the 403 is a plain-`curl` user-agent block, not a stated policy.
+  In a real browser pane it would very likely serve normally. It is therefore **not rejected on
+  policy grounds** — it is unverified because the browser pane was unavailable, and it is the one
+  candidate still worth a rendered-page check.
+
+DECISION: **ship NO `sites/<review-site>.json`.** Two reasons, in order:
+  1. No candidate cleared all three requirements on the evidence available: two block this agent by
+     name in robots.txt (decisive), one is unreachable, and the only robots-permitted candidate
+     answers non-browser clients with 403.
+  2. Writing a template for 91mobiles anyway would be inventing a URL shape that has not been shown to
+     resolve — precisely the mistake DS-1 refused when it declined to write
+     `pricehistoryapp.com/product/{slug}`. Its 403s do not even prove the slug pattern is right.
+
+This is the bead's **expected, acceptable outcome**, not a failure: the `offsite` seam built in beads
+02/03 is correct and simply never fires. `trust_assessment.offsite` stays `null`, `rating_disagrees`
+never fires from an off-site source, and cross-marketplace corroboration via `product_key` (bead 02)
+carries R3's "beyond the site" half on its own — with zero new hosts, which is why R5's residual is
+unchanged.
+
+WHAT SHIPPED INSTEAD: the `kind: "review"` adapter slot itself, so a source that later qualifies is a
+**data change** (`sites/<review-site>.json`) with no code edit. `scripts/policy.js` gained the kind at
+exactly four sites — `REQUIRED_URLS`, the kind check, the `kind !== 'shop'` capture block, and the
+whole-set `covers` gate — so a `review` adapter inherits the non-empty-`covers` rule and the
+adversarial-path rejection unchanged. The guard is unaffected: `policy.js` is its only import and
+`node scripts/guard.js selftest` still prints **`selftest OK: 60 cases`**.
+
+OPEN FOR THE HUMAN, alongside H6/H7: in a real browser pane, check 91mobiles' constructed lookup for
+a real product — does it resolve, and does the rendered page expose a rating and a review count as
+text with no click? If both hold, it qualifies and one data file ships; if either fails, "none
+qualified" stands as final. Its robots.txt already permits it, so the only open questions are the URL
+shape and the un-clicked text read.
+================================================================================
