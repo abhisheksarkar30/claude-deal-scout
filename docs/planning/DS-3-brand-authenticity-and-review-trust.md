@@ -1,4 +1,4 @@
-<!-- version=1, status=planning -->
+<!-- version=7, status=converged -->
 # DS-3 — claude-deal-scout: justify that a listing is the genuine brand's product, and whether its reviews and rating can be trusted
 
 Issue: none (request came from the user in chat: "generate a plan to identify/justify the brand of
@@ -58,7 +58,7 @@ trustworthy**: it never clicks, and no agent judgement silently re-ranks the use
 | R3 | Reviews/ratings must be checked **beyond** the site. | Nothing outside the two shop adapters is consulted except price history, and no history adapter ships ([site-adapters.md:118-124](../../docs/context/site-adapters.md#L118-L124)). The same item on the *other* marketplace is already reachable — `product_groups` groups on `product_key` ([score.js:363-368](../../scripts/score.js#L363-L368)) but only to display it ([data-model.md:98](../../docs/context/data-model.md#L98)). | Two sources: cross-marketplace corroboration (same `product_key`, different bare adapter id) and an optional off-site `trust.offsite` fed by a survey-gated `kind: "review"` adapter. |
 | R4 | The rating's provenance, not the rating itself, must be checked. | `rating_adj` shrinks on `review_count` ([score.js:236-240](../../scripts/score.js#L236-L240)) but never compares sites, and the read sample is never questioned. | `rating_disagrees` when a peer or an off-site source differs by ≥ `RATING_GAP`; `unverified_review_share` and `review_sample_too_small` on the read sample. |
 | R5 | Nothing may silently re-rank the user's options, and the flag-only guarantee must be **tested**, not asserted. | `best_product` = weighted score over must-haves-passing candidates; `best_deal` = cheapest passing must-haves + rating floor + budget ([score.js:328-361](../../scripts/score.js#L328-L361)). DS-1 pins both by fixture ([testing-and-quality.md:25](../../docs/context/testing-and-quality.md#L25)). | `trust` is merged in `report.js` **after** `score()`, exactly as `price_history` is ([report.js:43-46](../../scripts/report.js#L43-L46)); a `report.test.js` case asserts identical `best_product`/`best_deal` with and without trust input. |
-| R6 | The authenticity layer must be deterministic and testable offline, like every other judgement here. | The house split is "the model extracts; this script judges" ([history.js:3-11](../../scripts/history.js#L3-L11), [report.js:25-33](../../scripts/report.js#L25-L33)); `history.js` is fully implemented and pinned by ~24 tests with **no data source shipped at all** ([workflows.md:196-201](../../docs/context/workflows.md#L196-L201)). | `scripts/trust.js`, a sibling of `history.js`: same `validate`/`analyze`/`analyzeAll`/knobs/exports shape, same "invalid input → no output, no throw" rule, tests over fixtures only. |
+| R6 | The authenticity layer must be deterministic and testable offline, like every other judgement here. | The house split is "the model extracts; this script judges" ([history.js:3-11](../../scripts/history.js#L3-L11), [report.js:25-33](../../scripts/report.js#L25-L33)); `history.js` is fully implemented and pinned by ~24 tests ([testing-and-quality.md:24](../../docs/context/testing-and-quality.md#L24)) with **no data source shipped at all** ([workflows.md:196-201](../../docs/context/workflows.md#L196-L201)). | `scripts/trust.js`, a sibling of `history.js`: same `validate`/`analyze`/`analyzeAll`/knobs/exports shape, same "invalid input → no output, no throw" rule, tests over fixtures only. |
 
 **Decisions taken with the user (Phase 1, in their own terms).** "Also survey a review site" — the
 off-site source is a `kind: "review"` slot plus a survey that may legitimately ship nothing, mirroring
@@ -89,10 +89,17 @@ is out.
 
 ### 3.1 R1/R2/R3 — the `trust` contract, both halves
 
-One key, two shapes, exactly as `history` already works: an **input** sub-object the agent emits
-(validated by `score.js`), and an **output** block `trust.js` computes and `report.js` merges.
+Two keys, exactly as `history` already works: an **input** sub-object the agent emits on the
+candidate (`trust`, validated by `score.js`) and a **separate output** block `trust.js` computes and
+`report.js` merges under the distinct key `trust_assessment` — the same input/output split as
+`history` (input) vs `price_history` (output) at
+[report.js:43-46](../../scripts/report.js#L43-L46). The output does **not** overwrite the input: the
+report carries the validated `trust` sub-object on its own key *and* the computed
+`trust_assessment` block, so each key is separately sanitized (§3.3) and neither is derived from the
+other's raw text.
 
-**Input** (agent → `score.js` → `trust.js`), every field optional and none trusted:
+**Input** (the agent emits `trust` on the candidate; `score.js` validates it for the report), every
+field optional and none trusted:
 
 ```json
 "trust": {
@@ -110,8 +117,10 @@ field ([score.js:53](../../scripts/score.js#L53)), which keeps one fact in one p
 shipped flag and its tests untouched. `brand` and `seller` are free text off a hostile page, so both are
 capped at `MAX_STRING_LENGTH` and PII-sanitized with the existing `sanitize`
 ([score.js:96-103](../../scripts/score.js#L96-L103)) — a seller name is a business, not personal data,
-but the field is still arbitrary page text crossing a trust boundary. `offsite.url` is deliberately
-**not** carried: the source id names the site, and no third-party link enters the report.
+but the field is still arbitrary page text crossing a trust boundary. `offsite.source` is the same kind
+of agent-supplied string — `source` is one of `score.js`'s `SANITIZED_FIELDS`
+([score.js:61](../../scripts/score.js#L61)) — and is capped and sanitized the same way. `offsite.url`
+is deliberately **not** carried: the source id names the site, and no third-party link enters the report.
 
 **Output** (`trust.js` → `report.js` → the skill), mirroring [`history.js:198-207`](../../scripts/history.js#L198-L207):
 
@@ -119,15 +128,16 @@ but the field is still arbitrary page text crossing a trust boundary. `offsite.u
 |---|---|---|
 | `brand_confidence` | `"high" \| "medium" \| "low" \| "none"` | the ladder in §3.2. Four values, no fifth |
 | `signals` | `string[]` of the closed set in §3.2 | the *why*; the skill renders these in plain words as it does `flags` ([SKILL.md:106-107](../../skills/find-best-deal/SKILL.md#L106-L107)) |
-| `facts` | `{ brand, brand_store, seller, reviews_read, verified_read }` | the evidence actually read, sanitized+capped. This is the "justify" the user asked for |
-| `peer` | `{ source, price_gap_pct, rating_gap } \| null` | the other marketplace's listing of the same `product_key`, or `null` |
-| `offsite` | `{ source, rating, count, rating_gap } \| null` | a third-party source, or `null` when none ships/applies |
+| `facts` | `{ brand, brand_store, seller, reviews_read, verified_read }` | the evidence actually read: the `brand`/`seller` strings sanitized+capped, the two counts bounded to non-negative integers (not capped — §3.2). This is the "justify" the user asked for |
+| `peer` | `{ source, price_gap_pct, rating_gap } \| null` | the other marketplace's listing of the same `product_key`, or `null`; when several candidates on another site share the key, the one surfaced is the first under the same comparison `score.js`'s `betterThan` uses — lexicographic `source`, then raw-array index ([score.js:275-280](../../scripts/score.js#L275-L280)) — so the block is deterministic (R6). `source` is the peer's bare adapter id, capped+sanitized like `facts`. `price_gap_pct` = `(peer.price − candidate.price) / candidate.price × 100`, signed, the candidate as base — the same base and direction as `UNDERCUT_PCT` (§3.2); `rating_gap` = `peer.rating − candidate.rating`, signed (its magnitude is what `rating_disagrees` tests). A gap is `null` when either side of it is unavailable — no usable `rating` on the candidate or the peer (so no `rating_disagrees`), no usable `price` on either |
+| `offsite` | `{ source, rating, count, rating_gap } \| null` | a third-party source, or `null` when none ships/applies; `source` is the off-site adapter's id, capped+sanitized like `facts`; `rating_gap` = `offsite.rating − candidate.rating`, signed, and `null` (no `rating_disagrees`) when the candidate carries no usable `rating` to compare against (§5.2) |
 | `reason` | string | one plain sentence for the confidence, like `history.js`'s `reason` |
 | `caveat` | the fixed `CAVEAT` string | see below |
 
-> **`null` vs `"none"` is a real distinction and must not be collapsed.** `trust: null` means the
-> candidate carried no `trust` key at all — not attempted. `brand_confidence: "none"` means it *was*
-> read and nothing justifying was found. `history.js` has only the first notion
+> **`null` vs `"none"` is a real distinction and must not be collapsed.** `trust_assessment: null`
+> means the candidate carried no *usable* `trust` input — the key is absent, or its value is not a
+> usable object (an array, a string, a number) — not attempted. `brand_confidence: "none"`
+> means it *was* read and nothing justifying was found. `history.js` has only the first notion
 > ([history.js:150-152](../../scripts/history.js#L150-L152)); trust needs both, because "we looked and
 > could not justify this" is an answer the user asked for.
 
@@ -152,10 +162,17 @@ exported knobs → helpers → engine → `module.exports`.
 | `DISCREDITING_SIGNALS` | `['brand_not_in_title','seller_third_party','price_undercut']` | the subset that caps the ladder at `low` |
 | `MIN_REVIEWS_READ` | `4` | below this, no review-share signal either way — the sample cannot support one |
 | `UNVERIFIED_SHARE_MAX` | `0.5` | a read sample more than half unverified sets `unverified_review_share` |
-| `UNDERCUT_PCT` | `30` | this far cheaper than the same `product_key` elsewhere sets `price_undercut` |
+| `UNDERCUT_PCT` | `30` | when a peer on another site lists the same `product_key` at this percentage or more above **this** listing's price — `(peer − candidate) / candidate ≥ UNDERCUT_PCT/100` — sets `price_undercut`. The candidate's price is the base, here and at every other mention |
 | `RATING_GAP` | `1.0` | a peer's or an off-site rating this far apart sets `rating_disagrees` |
-| `MAX_REVIEWS_READ` | `50` | a sanity bound on the sample, not a target |
 | `CAVEAT` | the string above | carried on every block |
+
+`MAX_REVIEWS_READ` (`50`, a sanity bound on the sample, not a target) is deliberately **not** a
+`trust.js` knob: it is a validation bound, so it lives in `score.js` beside `MAX_NUMBER` and is used
+by that file's `validTrust` (§3.3). `trust.js` never references it, which keeps the import direction
+one-way (`trust.js` → `score.js`, §10) and mirrors `validHistory`, which bounds with `score.js`'s own
+helpers rather than importing `history.js`'s `MIN_POINTS`/`MAX_POINTS`
+([score.test.js:344](../../test/score.test.js#L344) pins that `score.js` does not carry history's
+`MIN_POINTS`).
 
 **The eight signals** — three discrediting, five informational. The split matters: an informational
 signal must never move the ladder, or "no brand store on Flipkart" would read as evidence of fraud.
@@ -164,8 +181,8 @@ signal must never move the ladder, or "no brand store on Flipkart" would read as
 |---|---|---|
 | `brand_not_in_title` | the listing's own `brand` string does not appear in its own `title` (case- and punctuation-insensitive) | discrediting |
 | `seller_third_party` | `third_party_seller === true` (the existing field) | discrediting |
-| `price_undercut` | a peer on another site lists the same `product_key` at ≥ `UNDERCUT_PCT`% more | discrediting |
-| `rating_disagrees` | a peer or the off-site source differs in rating by ≥ `RATING_GAP` | informational |
+| `price_undercut` | any peer on another site lists the same `product_key` at ≥ `UNDERCUT_PCT`% more than this listing's price | discrediting |
+| `rating_disagrees` | any peer or the off-site source differs in rating by ≥ `RATING_GAP` | informational |
 | `unverified_review_share` | `reviews_read ≥ MIN_REVIEWS_READ` and the unverified share > `UNVERIFIED_SHARE_MAX` | informational |
 | `review_sample_too_small` | `reviews_read < MIN_REVIEWS_READ` (including an absent sample) | informational |
 | `no_brand_store` | `brand_store !== true` — normal on Flipkart, which has no storefront concept | informational |
@@ -175,7 +192,7 @@ signal must never move the ladder, or "no brand store on Flipkart" would read as
 [history.js:226-230](../../scripts/history.js#L226-L230)):
 
 ```
-0. no evidence at all  -> "none"
+0. no evidence at all AND no discrediting signal -> "none"
    (brand, seller, brand_store !== true, third_party_seller undefined -- nothing usable was read)
 1. two supports AND no discrediting signal -> "high"
 2. exactly one support AND no discrediting signal -> "medium"
@@ -186,82 +203,161 @@ where the two **supports** are exactly: `brand_store === true`, and *a seller na
 `third_party_seller === false`*. That second one is deliberately fail-closed on an absent field — the
 boolean's own definition ("true only if **clearly** not authorised",
 [deal-scout.md:102](../../agents/deal-scout.md#L102)) means its absence is "couldn't tell", never
-support. Rung 0 must be checked before the counting, or a listing where the agent recorded only
-`brand_store: true` with no name would fall to `low` instead of `medium`.
+support. Rung 0 must be checked before the counting rungs, or a listing with no usable evidence at all
+would match rung 3's `otherwise` and fall to `low` instead of `none`.
 
 Rungs 1–3 are total and mutually exclusive by construction, which is what makes the ladder testable at
 each boundary rather than observed.
 
-**Cross-site corroboration (R3), computed set-wide.** `analyzeAll(candidates, options)` groups the raw
+Rung 0 carries the same `AND no discrediting signal` guard as rungs 1–2, so a fired discrediting
+signal is never labelled `none`. With no brand and no seller, the only discrediting signal reachable
+is `price_undercut` — it needs only a `product_key` and a peer ≥ `UNDERCUT_PCT`% dearer — and it
+forces rung 3 → `low`, honouring §3.2's rule that a discrediting signal caps the ladder at `low`.
+(`seller_third_party` needs `third_party_seller: true` and `brand_not_in_title` needs a `brand`,
+both of which rung 0's region forbids.)
+
+**Cross-site corroboration (R3), computed set-wide.** `analyzeAll(candidates)` groups the raw
 array by non-empty `product_key` and, for each candidate, takes peers whose **bare adapter id differs**
 — `sourceToBareId` from [policy.js:156-159](../../scripts/policy.js#L156-L159), reused rather than
-re-implemented, so "which site is this" keeps one definition. `price` is compared **raw, not
-`effective_price`**: offers are account-specific and non-comparable across sites, so the listing price
-is the only honest cross-site fact.
+re-implemented, so "which site is this" keeps one definition. A candidate whose narrowed `source` is
+**not a non-empty string is excluded from peer grouping entirely** — neither matched against nor
+counted as a peer. `sourceToBareId(undefined)` returns the literal `"undefined"`
+([policy.js:158](../../scripts/policy.js#L158)), which differs from every real bare id, so without
+this rule a `source`-less `product_key`-bearing candidate would look like a peer on a third site and
+could manufacture a *discrediting* `price_undercut` (or a `rating_disagrees`) out of nothing —
+contradicting this section's own "a malformed candidate yields absent facts". A candidate can have
+**more than one** peer — the other site may list the same `product_key` twice. The peer-derived
+signals read the whole set: `price_undercut` fires when **any** peer clears `UNDERCUT_PCT`,
+`rating_disagrees` when **any** peer (or the off-site source) differs by `RATING_GAP`. The single
+`peer` the block emits is the first of that set under `betterThan`'s comparison
+([score.js:275-280](../../scripts/score.js#L275-L280)) — always the same one for the same input, so
+the block is deterministic (R6) even when the signals were driven by a different peer. `price` is
+compared **raw, not `effective_price`**: offers are account-specific and non-comparable across sites, so the
+listing price is the only honest cross-site fact.
 
 `trust.js` does its own 5-line grouping rather than consuming `score.js`'s `product_groups`
 ([score.js:363-368](../../scripts/score.js#L363-L368)). That is deliberate, not duplication: `score.js`
 groups ">1 member, for display" across *all* sources including two account lists on one site, while
 trust asks "is there a peer on a **different** site". Do not "fix" one into the other.
 
-**`analyzeAll(candidates, …)` takes the agent's raw candidate array**, the same as
+**`analyzeAll(candidates)` takes the agent's raw candidate array**, the same as
 [history.js:280-284](../../scripts/history.js#L280-L284) and for the same reason stated in
 [report.js:25-33](../../scripts/report.js#L25-L33). Every field trust reads off that array —
-`title`, `price`, `source`, `product_key`, `third_party_seller` — is therefore **unvalidated**, and
-trust narrows each one locally before use (non-empty string; finite number ≥ 0 and ≤ `MAX_NUMBER`,
-imported from `score.js` so the bound has one home). A malformed candidate yields absent facts and a
-lower confidence; it never throws.
+`title`, `price`, `source`, `product_key`, `third_party_seller`, `rating`, and the candidate's own
+`trust` sub-object (`brand`, `brand_store`, `seller`, `reviews_read`, `verified_read`, `offsite`) —
+is therefore **unvalidated**, and trust narrows each one locally before use: top-level strings to a
+non-empty string; `price` to a finite number ≥ 0 and ≤ `MAX_NUMBER` (imported from `score.js` so the
+bound has one home); and `rating` to a finite `0 … 5`, anything else treated as absent. The `rating`
+bound is trust's own because `score.js` bounds a candidate's `rating` only to `MAX_NUMBER`, not
+`0 … 5` ([score.js:160-166](../../scripts/score.js#L160-L166)) — a hostile out-of-range value must
+not skew `rating_disagrees`. A malformed candidate yields absent facts and a lower confidence; it
+never throws.
+
+The raw `trust` sub-object is narrowed by `trust.js`'s own `validate(raw)` — the engine-side sibling
+of `score.js`'s `validTrust` (§3.3), exactly as `history.js`'s non-exported `validate`
+([history.js:71](../../scripts/history.js#L71)) is the engine-side sibling of `validHistory`
+([score.js:125-133](../../scripts/score.js#L125-L133)). It returns the narrowed sub-object, or `null`
+when the raw `trust` is not an object (the `null` side of §3.1's null-vs-"none" split), narrowing
+`brand`/`seller` with the imported `sanitize`/`MAX_STRING_LENGTH`, `brand_store` to a boolean,
+`reviews_read`/`verified_read` to non-negative integers, and `offsite` to an object with a non-empty
+`source`, a `rating` in `0 … 5` and a `count` ≥ 0. The `verified_read ≤ reviews_read` invariant is
+enforced **here too** — a violated pair is dropped (both counts removed, so `review_sample_too_small`
+fires), never corrected — because `validTrust` guards only the report-side copy while the engine reads
+the raw array ([report.js:35](../../scripts/report.js#L35),
+[score.js:150-181](../../scripts/score.js#L150-L181)). A dropped pair is not a dropped block — §5.2
+asserts the block is still returned. It bounds the counts to non-negative integers rather than
+importing `MAX_REVIEWS_READ` (see above: `trust.js` never references it).
+
+The two `source` strings the block emits (`peer.source`, `offsite.source`) cross back into
+the report, so `trust.js` runs them through the same `sanitize`/`MAX_STRING_LENGTH` it applies to
+`facts` (§3.3).
 
 ### 3.3 R1/R4 — `score.js` validates the input half
 
-`CANDIDATE_FIELDS` ([score.js:44-58](../../scripts/score.js#L44-L58)) gains `trust: 'object'`, exempt
-from the unknown-fields rule exactly as `history` is ([score.js:177-180](../../scripts/score.js#L177-L180)),
-and a new `validTrust(raw)` sibling to `validHistory` ([score.js:125-133](../../scripts/score.js#L125-L133))
+`CANDIDATE_FIELDS` ([score.js:44-58](../../scripts/score.js#L44-L58)) gains `trust: 'object'`, beside
+`history` ([score.js:55](../../scripts/score.js#L55)). There is no explicit unknown-fields rule to be
+exempt from: `validateCandidate` iterates the allowlist ([score.js:150](../../scripts/score.js#L150)),
+so a field not listed is simply never visited. The `trust: 'object'` type is inert on its own: the
+loop stores a value only for `string`/`number`/`boolean`/`offers`/`history`
+([score.js:150-181](../../scripts/score.js#L150-L181)), and an unhandled type stores nothing — so the
+loop gains a `trust` branch beside the `history` branch
+([score.js:177-180](../../scripts/score.js#L177-L180)) that calls `validTrust` and stores the result,
+or drops the field when it fails. A new `validTrust(raw)` sibling to `validHistory`
+([score.js:125-133](../../scripts/score.js#L125-L133))
 does **shape, type and bound** checking only — never the semantic rule, which stays in `trust.js`
 (one rule, one home):
 
 - `brand`, `seller` — strings, capped at `MAX_STRING_LENGTH` (dropped if not strings, not fatal);
 - `brand_store` — boolean, else dropped;
-- `reviews_read`, `verified_read` — integers in `0 … MAX_REVIEWS_READ`;
+- `reviews_read`, `verified_read` — integers in `0 … MAX_REVIEWS_READ`, where `MAX_REVIEWS_READ` is a
+  **`score.js`** constant defined beside `MAX_NUMBER` (not a `trust.js` knob — see §3.2). `score.js`
+  owns it rather than importing it: `trust.js` already imports `MAX_NUMBER`/`MAX_STRING_LENGTH`/
+  `sanitize` from `score.js` (§10), so a reverse import would close a `score → trust → score` require
+  cycle and load `trust.js` against a partial `score` export, silently dropping its numeric narrowing;
 - `verified_read ≤ reviews_read` — **the pair is dropped when violated, never corrected**, the same
   uniform "malformed input → no output" outcome `history` has
   ([data-model.md:65-71](../../docs/context/data-model.md#L65-L71));
-- `offsite` — object with a non-empty `source` string, `rating` in `0 … 5`, `count` ≥ 0;
+- `offsite` — object with a non-empty `source` string (capped+sanitized like `brand`/`seller`), `rating` in `0 … 5`, `count` ≥ 0;
 - any other key inside `trust` is dropped, and the dropped names are recorded in the candidate's
-  `dropped_fields` ([score.js:197](../../scripts/score.js#L197)), so a bad agent emission is visible
-  rather than silently ignored.
+  `dropped_fields` ([score.js:321](../../scripts/score.js#L321)), so a bad agent emission is visible
+  rather than silently ignored. Recording dropped *sub-keys* is **new behaviour** with no precedent:
+  `validHistory` destructures its known keys and ignores any others without recording them
+  ([score.js:125-133](../../scripts/score.js#L125-L133)).
 
-This is where the injection control lives: `trust.brand` and `trust.seller` are, before this, unbounded
-page text. `score.js` is the file that exists to bound them
-([score.js:3-10](../../scripts/score.js#L3-L10)) and it stays the only place that does.
+This is where the injection control lives: `trust.brand` and `trust.seller` are, before this,
+unbounded page text, and both the input sub-object and `trust.js`'s output `facts` carry them into
+the report. The `source` strings the block also surfaces — the validated input `trust.offsite.source`,
+and the output `trust_assessment.peer.source` (the peer's bare adapter id) and
+`trust_assessment.offsite.source` — are the same class of agent-supplied text (`source` is one of
+`score.js`'s `SANITIZED_FIELDS`), and without this control they would reach the report uncapped. `score.js`
+**owns the one cap + sanitizer definition**
+([score.js:96-103](../../scripts/score.js#L96-L103); [score.js:3-10](../../scripts/score.js#L3-L10)),
+and the same helper is applied on both render paths: `validTrust` caps and sanitizes the validated
+input under `trust` (including `trust.offsite.source`), and `trust.js` imports the same
+`sanitize`/`MAX_STRING_LENGTH` and applies them to its output `trust_assessment.facts` and to the
+`peer.source`/`offsite.source` strings it emits (§3.2, §10). Neither path prints raw page text.
 
 ### 3.4 R5 — `report.js` merges, and the ranking is untouched
 
-[`buildReport`](../../scripts/report.js#L34-L50) gains one sibling of the existing history join:
+[`buildReport`](../../scripts/report.js#L34-L50) gains one sibling of the existing history join.
+`trust.js`'s `analyzeAll` is imported under an alias — `history.js` already exports that name and
+`report.js` already binds it ([report.js:21](../../scripts/report.js#L21)) — and, unlike `history.js`'s,
+takes no options: the peer grouping needs only `product_key` and `sourceToBareId`, never the loaded
+adapter set.
 
 ```js
-const trusts = analyzeAll(candidates, { adapters });
+const { analyzeAll: analyzeTrust } = require('./trust');
+…
+const trusts = analyzeTrust(candidates);
 …
 candidates: scored.candidates.map((c) => ({
   ...c,
   price_history: histories[c.index] || null,
-  trust: trusts[c.index] || null,
+  trust_assessment: trusts[c.index] || null,
 })),
 ```
 
-`score()` runs first and is unchanged, so `best_product`, `best_deal`, `product_groups`, `flags` and
-every `score` value are byte-identical to today for the same input. Trust is *added*, after ranking,
-like `price_history`. This is the structural expression of the user's "flag only" decision, and
-§5.2 pins it with a test rather than a comment.
+`...c` still carries the validated `trust` input, and the computed block lands on the distinct
+`trust_assessment` key — the same shape as `...c` carrying `history` while `price_history` is added.
+`score()` runs first and is unchanged, so the **ranking is identical**: `product_groups`, `flags`,
+every per-candidate `score`, and the winning `best_product.index`/`score` and
+`best_deal.index`/`effective_price` are the same with and without `trust` input. The winning
+candidate objects themselves do carry the extra validated `trust` key (exactly as they already carry
+`history`), so the guarantee is on the ranking-relevant values, **not** on byte-identical objects.
+Trust is *added*, after ranking, like `price_history`. This is the structural expression of the
+user's "flag only" decision, and §5.2 pins it with a test rather than a comment.
 
 ### 3.5 R1/R2/R3 — the agent extraction step
 
 [agents/deal-scout.md](../../agents/deal-scout.md) step 3's field table
-([deal-scout.md:92-106](../../agents/deal-scout.md#L92-L106)) gains the six `trust` fields with the same
-care every other field gets, and step 4's price-history step gains a sibling step for the off-site
-review adapter (identical mechanics: applicable adapters are those whose `covers` names the candidate's
-bare shop-adapter id, queried in lexicographic id order, first usable result wins, otherwise the
-`offsite` key is omitted — [deal-scout.md:147-165](../../agents/deal-scout.md#L147-L165)). The agent's
+([deal-scout.md:92-106](../../agents/deal-scout.md#L92-L106)) gains the five product-page `trust`
+sub-fields (`brand`, `brand_store`, `seller`, `reviews_read`, `verified_read`) with the same care every
+other field gets, and step 4's price-history step gains a sibling step for the off-site review adapter
+that produces the sixth sub-field, `offsite` — `history` is added by step 4 the same way
+([deal-scout.md:104](../../agents/deal-scout.md#L104)). The sibling has identical mechanics: applicable
+adapters are those whose `covers` names the candidate's bare shop-adapter id, queried in lexicographic
+id order, first usable result wins, otherwise the `offsite` key is omitted
+([deal-scout.md:147-165](../../agents/deal-scout.md#L147-L165)). The agent's
 existing hard rules already cover this work and **do not change**: page text is data, never record
 personal data, never click, never report a value it did not read
 ([deal-scout.md:44-60](../../agents/deal-scout.md#L44-L60), [:195-202](../../agents/deal-scout.md#L195-L202)).
@@ -284,13 +380,22 @@ Two things the prompt must say explicitly, because both are ways this feature go
 - [`REQUIRED_URLS`](../../scripts/policy.js#L195) → `review: ['lookup']` (the same key `history` uses);
 - the kind check at [policy.js:218](../../scripts/policy.js#L218) accepts `"review"`;
 - the `kind === 'history'` block at [policy.js:247-260](../../scripts/policy.js#L247-L260) becomes
-  `kind !== 'shop'`, so a `review` adapter inherits **both** load-time rejections unchanged: a
-  non-empty `covers` naming loaded shop adapters ([:269-277](../../scripts/policy.js#L269-L277)), and
-  rejection if any `allow` regex can reach a path in the adversarial suite
+  `kind !== 'shop'`, so a `review` adapter is captured with its `covers` ([policy.js:259](../../scripts/policy.js#L259))
+  and inherits the in-block checks unchanged: a non-empty `covers` array, and rejection if any `allow`
+  regex can reach a path in the adversarial suite
   ([:251-258](../../scripts/policy.js#L251-L258)).
+- the whole-set validity loop at [policy.js:270-277](../../scripts/policy.js#L270-L277) is gated at
+  [:271](../../scripts/policy.js#L271) by `if (adapter.kind !== 'history') continue;`, so today it
+  skips every non-`history` kind. That gate becomes `if (adapter.kind === 'shop') continue;` — **the
+  fourth edit**, and the one that is easy to miss — so the rule that a `covers` entry must name a
+  *loaded shop adapter* runs for `review` as well as `history`. Without it, a `review` adapter whose
+  `covers` names a typo'd or unknown shop id loads cleanly, silently defeating the documented load
+  error ([site-adapters.md:91](../../docs/context/site-adapters.md#L91)).
 
-That is roughly six lines and no new guarantee — which is the point: a new host's blast radius is
-already bounded by checks that exist. `test/adapter.test.js` iterates `sites/`
+That is four edit sites — [policy.js:195](../../scripts/policy.js#L195),
+[:218](../../scripts/policy.js#L218), [:247](../../scripts/policy.js#L247),
+[:271](../../scripts/policy.js#L271) — and no *new* guarantee: a new host's blast radius is bounded by
+checks that already exist, once `:271` lets the `review` kind reach them. `test/adapter.test.js` iterates `sites/`
 ([testing-and-quality.md:105](../../docs/context/testing-and-quality.md#L105)), so any adapter the
 survey ships is covered without a new test; the kind itself gets explicit cases.
 
@@ -299,7 +404,7 @@ candidate source, record whether it has an addressable lookup built from a produ
 rendered page exposes as text without a click (a rating, a count), and what its `robots.txt` permits —
 then either author one `sites/<review-site>.json` or record "none qualified" with the reason. **A
 robots-disallowed or click-gated source is a "no", not a workaround**
-([site-adapters.md:136-141](../../docs/context/site-adapters.md#L136-L141)). Live-browser work needs
+([site-adapters.md:130](../../docs/context/site-adapters.md#L130), [:136-141](../../docs/context/site-adapters.md#L136-L141)). Live-browser work needs
 the user's go-ahead and may be deferred with the procedure written down — the same call the user made
 for H3, and the pipeline is built to be correct either way.
 
@@ -309,18 +414,23 @@ for H3, and the pipeline is built to be correct either way.
 ([SKILL.md:92-117](../../skills/find-best-deal/SKILL.md#L92-L117)) gains an **Authenticity** entry,
 in the same style as its flags entry: the brand confidence in plain words, each signal in plain words
 (not identifiers), the evidence actually read (brand, seller, review sample size), the cross-site
-peer when there is one, and the caveat **verbatim** — plus one sentence the skill must not paraphrase
-away: *absence of a signal is not proof of authenticity*. `README.md` gains a short "Is it genuine?"
+peer when there is one, **the off-site source with its rating and count when there is one** (the
+`trust_assessment.offsite` block — the "beyond the site" evidence R3 asks for), and the caveat
+**verbatim** (it already carries the sentence *absence of a signal is not proof of authenticity* —
+the skill must not paraphrase it away). `README.md` gains a short "Is it genuine?"
 section next to its existing history-source rule
 ([README.md:126-130](../../README.md#L126-L130)), stating what the check can and cannot see.
 
 ### 3.8 What deliberately does not change
 
-- **The guard, the hooks, and `browsers/*.json`.** No new tool, no new capability, no new path on the
-  two shipped sites. The read-only surface is identical to today's.
-- **`flagsFor` and the `flags` array.** Trust signals live in `trust.signals`, owned by `trust.js` —
-  one producer per field. Merging them into `flags` would give that array two producers and break the
-  §5.2 knob/flag defaults test ([score.js:388-407](../../scripts/score.js#L388-L407)).
+- **The guard, the hooks, and `browsers/*.json`.** No new tool and no new capability; no new path on
+  the two shipped sites. `guard.js` and `hooks/hooks.json` **code** is unchanged — the reachable host
+  set widens only if bead 05 ships a `sites/<review-site>.json` adapter, a *data* change via
+  `sites/*.json` that §6 R5 covers and `loadSites`/`checkUrl` already enforce.
+- **`flagsFor` and the `flags` array.** Trust signals live in `trust_assessment.signals`, owned by `trust.js` —
+  one producer per field, like every other field here. Merging them into `flags` would give that array
+  two producers (`flagsFor` in `score.js` and the trust layer), so a flag's origin would no longer be
+  one file.
 - **`history.js`, `guard.js`, `policy.js`'s URL rules, `data/sale-calendar.json`.**
 - **The ranking.** See R5.
 
@@ -331,12 +441,12 @@ section next to its existing history-source rule
 New:
 - `scripts/trust.js`
 - `test/trust.test.js`
-- `.beads/DS-3/evidence-05.txt` (the review-source survey; bead 05)
+- `.beads/DS-3/evidence-05.txt` (the H6/H7 live-check findings and the H8 review-source survey; beads 04 and 05)
 - `sites/<review-site>.json` — **only if the survey verifies one** (bead 05; may not exist)
 
 Modified:
-- `scripts/score.js` — `CANDIDATE_FIELDS.trust`, `validTrust`, exports
-- `scripts/report.js` — the `trust` merge ([report.js:34-50](../../scripts/report.js#L34-L50))
+- `scripts/score.js` — `CANDIDATE_FIELDS.trust`, `validTrust` (internal, like `validHistory`; no new export, since `MAX_REVIEWS_READ` is used only inside `validTrust`)
+- `scripts/report.js` — the `trust_assessment` merge ([report.js:34-50](../../scripts/report.js#L34-L50))
 - `agents/deal-scout.md` — step 3's field table, the off-site step, the two prompt rules in §3.5
 - `skills/find-best-deal/SKILL.md` — the Authenticity presentation entry
 - `scripts/policy.js` — the `review` kind (bead 05)
@@ -347,9 +457,10 @@ Modified:
 
 ### 4.2 Explicitly not touched
 
-- **`scripts/guard.js` and `hooks/hooks.json`.** Nothing in this story reaches a new host or a new
-  tool, so the enforcement layer is untouched — and a change there would need its own security
-  reasoning, not a ride-along.
+- **`scripts/guard.js` and `hooks/hooks.json`.** No change to their code: no new tool, and the
+  reachable host set widens only if bead 05 ships a `sites/<review-site>.json` adapter — a data change
+  via `sites/*.json`, which §6 R5 already covers — so the enforcement layer is untouched. A code
+  change there would need its own security reasoning, not a ride-along.
 - **The shipped `sites/*.json` `allow` lists.** Adding `^/sp$` (Amazon seller profiles),
   `^/product-reviews/` (Flipkart review lists) or `^/seller/` would widen the *highest-value* trust
   surface. [security-and-permissions.md:118-120](../../docs/context/security-and-permissions.md#L118-L120)
@@ -372,22 +483,28 @@ Modified:
 
 | Risk | Coverage |
 |---|---|
-| A trust signal silently changes the ranking | `report.test.js`: identical `best_product`/`best_deal` with and without `trust` input |
+| A trust signal silently changes the ranking | `report.test.js`: identical winning `index`/`score` — and identical per-candidate `score` — with and without `trust` input |
 | The ladder is not total — a real input combination falls through | `trust.test.js`: one case per rung **and** one per rung boundary (supports 2/1/0 × discrediting present/absent) |
-| "No brand store on Flipkart" reads as evidence of fraud | `trust.test.js`: `no_brand_store` alone leaves the confidence at `medium`/`low`, never `low` *because of* it; `DISCREDITING_SIGNALS` is asserted to exclude it |
+| "No brand store on Flipkart" reads as evidence of fraud | `trust.test.js`: `no_brand_store` alone leaves the confidence at `none`/`medium`, never `low` *because of* it; `DISCREDITING_SIGNALS` is asserted to exclude it |
 | A single-site run invents cross-site signals | `trust.test.js`: one candidate, no peer → `peer: null` and neither `price_undercut` nor `rating_disagrees` |
-| A malformed review sample is trusted instead of dropped | `trust.test.js`: `verified_read > reviews_read` → no review signals, no throw |
-| Unbounded hostile text reaches the report through `trust.brand`/`trust.seller` | `score.test.js`: over-long and PII-shaped values are capped/redacted; a non-string is dropped |
+| A malformed review sample is trusted instead of dropped | `trust.test.js`: `verified_read > reviews_read` → the engine drops the pair (the share is no longer computable, so no `unverified_review_share`; `review_sample_too_small` fires instead — no throw); `score.test.js`: the report-side copy is dropped too |
+| Unbounded hostile text reaches the report through the `trust` input or the `trust_assessment` output (`facts`, `peer.source`, `offsite.source`) | `score.test.js`: over-long and PII-shaped input values (including `offsite.source`) are capped/redacted; a non-string is dropped. `trust.test.js`: the output `facts` strings and the emitted `peer`/`offsite` `source` strings are likewise capped/sanitized |
 | An absent `third_party_seller` counts as support (fail-open) | `trust.test.js`: seller name with no `third_party_seller` → at most `medium`, never `high` |
 | `trust.js` throws on a malformed candidate and takes the report down | `trust.test.js`: every invalid-input case returns `null`/absent, never throws |
 | A `review` adapter reaches an account path | `adapter.test.js`: a `review` adapter with an overbroad `allow` is rejected, same as `history` |
 
 ### 5.2 New tests
 
-- **`test/trust.test.js`** (new, ~28 cases) — the ladder: `none` on no evidence; `high` at two supports
+- **`test/trust.test.js`** (new, ~31 cases) — the ladder: `none` on no evidence; `high` at two supports
   with no discrediting signal; `medium` at exactly one support (each support singly); `low` when read
   but unsupported; and the boundary that matters most, `brand_store: true` + `third_party_seller: true`
-  → `low` (not `high`), because the discrediting clause outranks the supports. Signals: `brand_not_in_title`
+  → `low` (not `medium`), because the one fired discrediting signal blocks rung 2's one-support case and
+  lands it on rung 3; **and the two-support
+  case that fires a discrediting signal** (`brand_store: true` + a seller name + `third_party_seller:
+  false`, i.e. both supports, plus a `price_undercut` peer) → `low`, not `high` — the only case that
+  exercises rung 1's own `AND no discrediting signal` clause; and the rung-0 boundary, rung-0 inputs
+  (no brand, no seller, no brand store, `third_party_seller` absent) plus a `price_undercut` peer →
+  `low`, never `none`. Signals: `brand_not_in_title`
   fires when the brand string is absent from the title and not when it is present in a different case or
   with punctuation between; `price_undercut` at exactly `UNDERCUT_PCT` (fires) and one point below (does
   not); `rating_disagrees` at exactly `RATING_GAP`; `unverified_review_share` either side of
@@ -395,22 +512,38 @@ Modified:
   from the same input; `no_brand_store` and `no_peer_site` present without moving the confidence.
   Peer selection: the same `product_key` twice on the **same** site is not a peer (`sourceToBareId`
   equality); a peer on another site is; a peer with no `price` contributes no gap; a
-  `product_key`-less candidate has no peers and no signals. Off-site: `rating_disagrees` against the
-  on-site rating; no gap signal when the candidate has no `rating` to compare; out-of-range `rating`
-  dropped. Degradation: absent `trust` key → `null`; `trust: []` and `trust: "x"` → `null`;
-  `verified_read > reviews_read` → pair dropped, block still returned, no throw; every block carries
+  `product_key`-less candidate has no peers and no signals; a `product_key`-bearing candidate with no
+  `source` is excluded from peer grouping (no peer, so no `price_undercut`/`rating_disagrees`); two
+  candidates on the other site sharing the `product_key` → the `peer` surfaced is the first under
+  `betterThan`'s comparison (deterministic across runs, and the block's gaps are its own, not the
+  other peer's); a candidate with no `rating` → the block's `rating_gap` is `null` and no
+  `rating_disagrees` fires; the surfaced `price_gap_pct` is `null` when the surfaced peer's own price
+  is unusable; the emitted `peer.source`
+  is capped/sanitized.
+  Off-site: the `trust_assessment.offsite`
+  block carries the source, rating and count the input supplied (the emitted `source` capped/sanitized);
+  `rating_disagrees` against the
+  on-site rating; no gap signal — `offsite.rating_gap: null` — when the candidate has no `rating` to
+  compare; out-of-range `rating`
+  dropped. Degradation: absent `trust` input → `trust_assessment: null`; `trust: []` and `trust: "x"`
+  → `trust_assessment: null`; `verified_read > reviews_read` → pair dropped, block still returned, no
+  throw; every block carries
   `caveat`. Knobs: the exported defaults are asserted, mirroring
   [score.test.js's knob test](../../docs/context/testing-and-quality.md#L104). Alignment: `analyzeAll`
   returns an index-aligned array and `null` for a candidate with no trust input.
 - **`test/score.test.js`** — a candidate carrying a `trust` sub-object passes validation with the
   sub-object intact (the `history`-retention pattern, [testing-and-quality.md:25](../../docs/context/testing-and-quality.md#L25));
   an over-long `trust.brand` is capped at `MAX_STRING_LENGTH`; a PII-shaped `trust.seller` is redacted;
+  an over-long or PII-shaped `trust.offsite.source` is capped/redacted;
   a `verified_read` greater than `reviews_read` drops the pair but keeps the candidate; a non-numeric
   `reviews_read` drops only that field; an unknown key inside `trust` is dropped and named in
   `dropped_fields`.
-- **`test/report.test.js`** — the merged report carries `trust` on every surviving candidate (`null`
-  where absent); **and the ranking guarantee**: the same fixture run twice, once with `trust` input and
-  once without, yields byte-identical `best_product`, `best_deal` and per-candidate `score`.
+- **`test/report.test.js`** — the merged report carries `trust_assessment` on every surviving
+  candidate (`null` where absent) and leaves the validated `trust` input intact beside it (not
+  overwritten); **and the ranking guarantee**: the same fixture run twice, once with `trust` input and
+  once without, yields an identical `best_product.index` + `score`, an identical `best_deal.index` +
+  `effective_price`, and identical per-candidate `score` (the added `trust`/`trust_assessment` keys
+  aside).
 - **`test/adapter.test.js`** — a synthetic `kind: "review"` adapter loads; one with an overbroad `allow`
   (`^/.*$`) is rejected at load; one whose `covers` names an unknown shop id is rejected; a `review`
   adapter missing `urls.lookup` is rejected.
@@ -441,27 +574,33 @@ DS-2's ten, so the repo's list becomes fourteen):
 11. Make `trust.js` ignore the sample floor (`MIN_REVIEWS_READ` → `0`) → the
     `review_sample_too_small` test, and the `unverified_review_share` "too small a sample yields no
     share signal" case, must fail.
-12. Remove the `verified_read ≤ reviews_read` check in `score.js`'s `validTrust` → the
-    "a malformed review sample is dropped, not corrected" test must fail (the pair is now trusted).
+12. Remove the `verified_read ≤ reviews_read` check in `score.js`'s `validTrust` → the **score.test.js**
+    case "a `verified_read` greater than `reviews_read` drops the pair but keeps the candidate" must
+    fail (the report-side pair is now trusted). The engine-side copy of the same invariant is
+    `trust.js`'s own `validate` (§3.2), which its `trust.test.js` case covers.
 13. Make the peer lookup compare bare ids with `!==` dropped (any same-`product_key` candidate counts,
     including one on the same site) → the "the same product on the same site is not a peer" test and the
     `price_undercut` boundary test must fail.
-14. Remove the "AND no discrediting signal" clause from rung 1 of the ladder → the
-    `brand_store: true` + `third_party_seller: true` test must now return `high` instead of `low`.
+14. Remove the "AND no discrediting signal" clause from rung 2 of the ladder → the
+    `brand_store: true` + `third_party_seller: true` test (one support, one discrediting signal) must
+    now return `medium` instead of `low`.
 
-Expected margin: all four flip pass → fail (13 flips two tests, the same accepted deviation DS-1
-recorded for control 3 and DS-2 for control 10). Record the observed failing test names in the bead's
+Expected margin: all four flip pass → fail (11 and 13 each flip two tests — the same accepted deviation DS-2
+recorded for control 10, whose single revert loop flips two tests; control 3's recorded deviation was of
+a different kind, a control that flipped on a different path than the plan assumed —
+[testing-and-quality.md:67-90](../../docs/context/testing-and-quality.md#L67-L90)). Record the observed failing test names in the bead's
 Review Notes, and confirm each mutated file byte-identical afterwards.
 
 ## 6. Risk areas
 
 - **R1 — A confidence label reads as a verdict.** "high" printed next to a counterfeit is worse than no
   label. Mitigation: the word used in the report is *evidence*, never *authentic*; the `caveat` string
-  travels with every block and the skill may not paraphrase it away; the residual below is in
-  `docs/SECURITY.md`. Do **not** rename `brand_confidence` to anything that sounds like a guarantee.
+  travels with every block and the skill may not paraphrase it away; the residual is written into
+  `docs/SECURITY.md` (stated in §10). Do **not** rename `brand_confidence` to anything that sounds like a guarantee.
 - **R2 — Hostile text reaching the report through a new field.** `trust.brand`/`trust.seller` are the
-  first new free-text fields since DS-1. Mitigation: capped and sanitized in the one file that owns
-  injection control (§3.3), never printed raw elsewhere.
+  first new free-text fields since DS-1. Mitigation: capped and sanitized on both render paths — the
+  one helper defined in `score.js`, applied by `validTrust` to the input and by `trust.js` to the
+  output `facts` (§3.3); never printed raw elsewhere.
 - **R3 — A count the agent got wrong.** `reviews_read` is an LLM count; a wrong one moves
   `unverified_review_share` the wrong way. Mitigation: `MIN_REVIEWS_READ` floor, the invariant check,
   prompt wording (§3.5), and §5.3's explicit note that the count itself is unverifiable. The signal is
@@ -499,13 +638,13 @@ Review Notes, and confirm each mutated file byte-identical afterwards.
 
 | # | Bead | Priority | Depends on | Purpose |
 |---|---|---|---|---|
-| 01 | `data-trust-schema` | P0 | — | `score.js`: `CANDIDATE_FIELDS.trust` + `validTrust` + retention/cap/drop tests |
-| 02 | `service-trust-engine` | P0 | 01 | `scripts/trust.js` + `test/trust.test.js`: the ladder, the 8 signals, peer/off-site corroboration, the knobs, control 11 |
-| 03 | `pipeline-merge-trust` | P0 | 02 | `report.js` merge + the integration and identical-ranking tests, control 12 |
+| 01 | `data-trust-schema` | P0 | — | `score.js`: `CANDIDATE_FIELDS.trust` + `validTrust` + retention/cap/drop tests, control 12 |
+| 02 | `service-trust-engine` | P0 | 01 | `scripts/trust.js` + `test/trust.test.js`: the ladder, the 8 signals, peer/off-site corroboration, the knobs, controls 11/13/14 (and 13's peer-lookup fixture) |
+| 03 | `pipeline-merge-trust` | P0 | 02 | `report.js` merge + the integration and identical-ranking tests |
 | 04 | `agent-trust-extraction` | P0 | 02 | `deal-scout.md`: the field table, the off-site step, the two prompt rules; H6/H7 live check |
-| 05 | `data-review-adapter-survey` | P1 | 01 | `policy.js` `review` kind + adapter tests + the survey, and an adapter **only if one verifies** (H8); control 13's fixture, control 14 |
+| 05 | `data-review-adapter-survey` | P1 | 01 | `policy.js` `review` kind + adapter tests + the survey, and an adapter **only if one verifies** (H8) |
 | 06 | `skill-present-trust` | P0 | 03, 04 | `SKILL.md` Authenticity entry + `README.md` section, including the caveat wording |
-| 07 | `docs-security-trust` | P1 | 06 | `docs/SECURITY.md`: the new trust surface and its residual (§6 R1/R3) |
+| 07 | `docs-security-trust` | P1 | 06 | `docs/SECURITY.md`: the new trust surface and its residual (§6 R1) |
 
 Graph in words: **01 → 02**, then **03** (the merge) and **04** (the prompt) both depend on 02 and are
 otherwise independent; **05** is independent of 03/04 and can run at any point after 01; **06** needs
@@ -567,14 +706,15 @@ pure helpers, with `report.js` still the only composition root.
 
 **QA engineer.** The case most likely to be silently untested is the one where **every signal is
 absent** — no brand store, no peer, no review sample, no seller. It must land on `low`/`none` with a
-reason, not crash, not print "high", and not be confused with `trust: null`. The rung-0-vs-rung-3
+reason, not crash, not print "high", and not be confused with `trust_assessment: null`. The rung-0-vs-rung-3
 distinction (§3.2) exists for exactly this case and has its own test. Second: a single-site run must
 produce **no** cross-site signals — an off-by-one in the peer lookup would invent a counterfeit signal
 on every candidate, and control 13 pins it.
 
 **Security engineer.** One new trust surface: **free text from a hostile page** (`trust.brand`,
-`trust.seller`) entering the report through a new field, mitigated by the existing cap + sanitizer in
-`score.js` and by never printing raw page text elsewhere. One widened surface, conditionally: a
+`trust.seller`) entering the report through a new field, mitigated by the existing cap + sanitizer —
+defined once in `score.js`, applied by `validTrust` to the input and by `trust.js` to the output
+`facts` — and by never printing raw page text elsewhere. One widened surface, conditionally: a
 `review` adapter adds a third-party host, inheriting the `covers` and adversarial-path rejections
 unchanged (§3.6). One **new residual**, which must be written into `docs/SECURITY.md` rather than left
 implied: *the authenticity verdict is a rule over page facts that a counterfeiter controls, so a
@@ -592,28 +732,31 @@ Seeded from Phase 1/2, to be consumed at Phase 5.6 (this list is a floor; the br
   [conventions.md:119](../../docs/context/conventions.md#L119). **Already stale before this story.**
 - [INDEX.md:27](../../docs/context/INDEX.md#L27), [testing-and-quality.md:15-26](../../docs/context/testing-and-quality.md#L15-L26)
   — "123 tests, 7 files" and the per-file table become stale when `test/trust.test.js` lands.
+- [workflows.md:199-200](../../docs/context/workflows.md#L199-L200) — `history.js` is described as
+  "pinned by 30-odd tests"; the real count is 24 ([testing-and-quality.md:24](../../docs/context/testing-and-quality.md#L24)).
+  **Already stale before this story** (surfaced by round-5 F5.2).
 - [testing-and-quality.md:51-65](../../docs/context/testing-and-quality.md#L51-L65) — "ten
   mutation-and-revert controls" becomes fourteen, with controls 11–14 and their observed failing tests.
 - [data-model.md:20-39](../../docs/context/data-model.md#L20-L39) — the candidate catalogue gains
   `trust`; the enums table ([:118-127](../../docs/context/data-model.md#L118-L127)) gains the
-  `brand_confidence` values and the signal names; a new `trust` input/output contract row alongside the
-  `history` ones.
+  `brand_confidence` values and the signal names; new `trust` input and `trust_assessment` output
+  contract rows alongside the `history` ones.
 - [workflows.md:137-162](../../docs/context/workflows.md#L137-L162) — the report-pipeline flow gains
   `trust.js` as a third child of the raw candidate array, plus a new flow for the ladder.
 - [architecture.md](../../docs/context/architecture.md) — the module table and the extract/judge split
   gain a third engine.
-- [api-surface.md:79](../../docs/context/api-surface.md#L79) — the exports list gains `trust.js`'s
-  knobs and entry points.
+- [api-surface.md:78-81](../../docs/context/api-surface.md#L78-L81) — the exports table gains a
+  `trust.js` row beside `score.js`'s.
 - [glossary.md](../../docs/context/glossary.md) — new terms: `brand_confidence`, `signal`, `peer`,
   `facts`, and the `trust` input vs output distinction.
 - [site-adapters.md:26-51](../../docs/context/site-adapters.md#L26-L51) — the adapter schema and
   `kind` enum gain `review` (only if bead 05 lands the kind).
 - [security-and-permissions.md](../../docs/context/security-and-permissions.md) — the trust surfaces
-  table, the verification-status table, and the new residual from §6 R1/R3.
+  table, the verification-status table, and the new residual from §6 R1.
 - [README.md](../../README.md) — the new authenticity section, and the off-site source rule if bead 05
   ships an adapter.
 - **Not stale, verified while planning:** `docs/planning/DS-1-deal-scout-plugin.md` §3.5's `flags` list
-  and §5.4's controls 1–10 are untouched by this story (trust signals are not flags; controls 9–10 are
+  and §5.4's controls 1–8 are untouched by this story (trust signals are not flags; controls 9–10 are
   DS-2's and remain as written).
 
 ## Change History
@@ -632,3 +775,214 @@ decided the §7 pre-flight: the live checks (H6–H8) **run in this story** rath
 way br-DS-1-04 deferred H3. All four decisions are folded into this v1, which is the revision handed to
 the cross-review loop — the marker stays at 1 because nothing has been reviewed yet. Not yet
 cross-reviewed.
+
+### v2 (round-1 triage)
+Round 1 returned 6 findings, all verified against source and all justified; no scope change, and none
+of the four settled Phase-1/Phase-2 decisions was reopened. Fixes:
+
+- **F1.1** (§3.6) — added the missed fourth `policy.js` edit site, `:271` (`adapter.kind !== 'history'`
+  → `adapter.kind === 'shop'`), so a `review` adapter's `covers` is actually validated; corrected the
+  "roughly six lines / no new guarantee" wording to "four edit sites".
+- **F1.2** (§3.2) — added `rating` to the fields trust reads off the raw array, narrowed to a finite
+  `0 … 5` (else absent), because `score.js` bounds it only to `MAX_NUMBER`.
+- **F1.3** (§3.2, §5.2, §5.4) — rung 0 now carries `AND no discrediting signal`, so a discrediting
+  signal reaches beyond it; added the rung-0 boundary test; retargeted control 14 from rung 1 to
+  rung 2 (removing rung 1's clause cannot flip its one-support test) with the correct outcome,
+  `medium`.
+- **F1.4** (§3.2, §3.3) — `MAX_REVIEWS_READ` moved out of the `trust.js` knobs into `score.js` beside
+  `MAX_NUMBER`, removing the `score → trust → score` require cycle; `MIN_REVIEWS_READ` stays a
+  `trust.js` knob.
+- **F1.5** (§8) — control 12 reassigned to bead 01 and controls 13/14 to bead 02, so each control sits
+  with the file it mutates.
+- **F1.6** (§3.3) — corrected the `CANDIDATE_FIELDS`/unknown-fields reasoning and cites
+  (`score.js:55`/`:150`, not `:177-180`), the `dropped_fields` cite (`:321`, not `:197`), and stated
+  that recording dropped `trust` sub-keys is new behaviour.
+
+Marker at 2 (first reviewed revision).
+
+### v3 (round-2 triage)
+Round 2 returned 4 findings, all MINOR, all verified against source and all justified; no scope change,
+and none of the four settled Phase-1/Phase-2 decisions was reopened. Fixes:
+
+- **F2.1** (§5.2) — added the missing rung-boundary case that §5.1's "supports 2/1/0 × discrediting
+  present/absent" promise implied but §5.2 never named: two supports *with* a fired discrediting
+  signal → `low`, not `high`. It is the only case exercising rung 1's own `AND no discrediting signal`
+  clause (control 14 mutates rung 2, leaving rung 1 asserted-by-construction). Bumped the count to ~29.
+- **F2.2** (§3.1, §3.3, §3.4) — replaced the "one key, two shapes, exactly as `history`" framing with
+  history's actual two-key split: input `trust` (validated, kept on the candidate) and output
+  `trust_assessment` (computed, merged), so the output no longer overwrites the validated input and
+  the framing is true ([report.js:43-46]). Rewrote §3.3 so it no longer claims `score.js` is the only
+  place that bounds the free text: `score.js` owns the one cap+sanitizer **definition**, applied by
+  `validTrust` to the input and by `trust.js` to the output `facts` (the render path). Flag-only
+  guarantee untouched.
+- **F2.3** (§3.7, §5.2) — the Authenticity presentation now names the off-site source with its rating
+  and count (the `trust_assessment.offsite` block), not only the cross-site peer, and §5.2 asserts the
+  block carries the source/rating/count the input supplied.
+- **F2.4** (§3.8, §4.2) — rewrote the two "no new host / identical surface" claims, which were
+  contradicted by bead 05's optional `sites/<review-site>.json` and by §6 R5, to say `guard.js`/
+  `hooks.json` **code** is unchanged while the reachable set widens only if bead 05 ships an adapter.
+
+Marker at 3 (second reviewed revision).
+
+### v4 (round-3 triage — structural sweep)
+Round 3 was a structural-sweep round (classes `missing-declaration`, `stale-xref`, `other`). It
+returned 5 findings, all verified against source and all justified; no scope change, and none of the
+four settled Phase-1/Phase-2 decisions was reopened. Findings:
+
+- **F3.1** (§3.8) — `trust.signals` → `trust_assessment.signals`. No `signals` field exists on the
+  validated input `trust` (`score.js:44-58` has no such allowlist entry, and §3.3 drops any other key
+  inside `trust`); it lives on the computed output block. A survivor of the pre-F2.2 single-key naming.
+- **F3.2** (§5.2) — the `brand_store: true` + `third_party_seller: true` case read "(not `high`)"; that
+  input has one support, so the true contrast is `medium` (rung 2), i.e. "(not `medium`)" — matching
+  §5.4 control 14. Restated the reason (the fired discrediting signal blocks rung 2's one-support case).
+- **F3.3** (§3.2) — the `UNDERCUT_PCT` threshold was defined two ways (knob base = peer's price; signal
+  row and rung-0 base = the candidate's price). Stated one base once, in the knob's Meaning, as
+  `(peer − candidate) / candidate ≥ UNDERCUT_PCT/100`, and made the signal row read the same direction.
+- **F3.4** (§3.2, §5.1) — two statements contradicted the ladder: (a) the rung-0 rationale's example
+  (`brand_store: true`, no name) yields `medium` either way, so its stated `low` is unreachable — the
+  ordering's real job is to keep a no-evidence listing off rung 3 (`low`) so it reads `none`, now stated
+  that way; (b) `no_brand_store` alone yields `none`/`medium`, not `medium`/`low`.
+- **F3.5** (§3.1, §3.2, §3.3, §5.1, §5.2) — the "Neither path prints raw page text" assurance missed
+  two agent-supplied strings: the output `peer.source` (a peer's raw `source` via `sourceToBareId`) and
+  `offsite.source` (input `trust.offsite.source` / output `trust_assessment.offsite.source`). Both are
+  now capped+sanitized with the same `sanitize`/`MAX_STRING_LENGTH` as `facts` on both render paths,
+  with §5.1/§5.2 coverage added.
+
+Class-sweep fixes made in the same round (not separate findings):
+
+- **validTrust wiring** (§3.3) — `missing-declaration`. Named the `validateCandidate` wiring the plan
+  relied on but never stated: the field loop gains a `trust` branch beside `history`
+  ([score.js:177-180]) that calls `validTrust`; the `trust: 'object'` type alone is inert because the
+  loop stores nothing for an unhandled type.
+- **`analyzeAll` import + dead option** (§3.4) — `missing-declaration`. `report.js` already binds
+  history's `analyzeAll` ([report.js:21]), so the snippet now imports trust's under an alias
+  (`analyzeTrust`) and drops the unused `{ adapters }` argument (peer grouping needs no adapter set).
+- **§11 citation imprecisions** — `stale-xref`. `api-surface.md:79` → `:78-81` (the exports *table*, not
+  the `score.js` row); "§5.4's controls 1–10" → `1–8` of the DS-1 plan
+  ([testing-and-quality.md:52](../../docs/context/testing-and-quality.md#L52) records DS-1 added eight
+  and DS-2 two); `score.test.js:344` narrowed to the `MIN_POINTS` it actually asserts; the §3.6
+  robots-rule cite gains `site-adapters.md:130`.
+
+Marker at 4 (third reviewed revision).
+
+### v5 (round-4 triage — structural sweep)
+Round 4 was again a structural-sweep round (classes `missing-declaration`, `stale-xref`, `other`). It
+returned 5 findings (4 MINOR, 1 NIT), all verified against source and all justified; no scope change,
+and none of the four settled Phase-1/Phase-2 decisions was reopened. Findings:
+
+- **F4.1** (§3.2, §5.1, §5.4) — the engine reads the raw candidate array (`report.js:35`, `:38-39`),
+  so it must narrow the raw `trust` **sub-object** itself, not just the six top-level fields §3.2
+  listed. Added `trust` (+ its sub-fields) to §3.2's raw-read list and declared `trust.js`'s
+  `validate(raw)` — the engine-side sibling of `score.js`'s `validTrust`, exactly as `history.js:71`'s
+  non-exported `validate` is of `validHistory` (`score.js:125-133`). Retargeted §5.1's malformed-sample
+  row and control 12 to name the layer each exercises (control 12 mutates `score.js`, so it points at
+  the score.test.js case; the engine-side drop is the trust.test.js case).
+- **F4.2** (§3.2) — `analyzeAll(candidates, options)` → `analyzeAll(candidates)`; §3.4 already says
+  "takes no options" (`history.js:281`'s `(candidates, options = {})` was the shape §3.2 copied). The
+  raw-array paragraph's `analyzeAll(candidates, …)` updated to match.
+- **F4.3** (§3.4, §5.1, §5.2) — the ranking guarantee was stated as byte-identical
+  `best_product`/`best_deal`, which cannot hold: `score.js:315-322`/`:336-347` spread the validated
+  candidate (carrying `trust`) into the winning objects. Restated as the true invariant — identical
+  winning `index`/`score` (and `effective_price`), identical per-candidate `score` — with the extra
+  `trust` key named explicitly. Flag-only guarantee untouched.
+- **F4.4** (§8, §11) — the `docs/SECURITY.md` residual cite `§6 R1/R3` → `§6 R1`; only R1 names a
+  SECURITY.md residual (§6 R3's is documented against §5.3, and §10 names one new residual).
+- **F4.5** (§3.2, §5.2) — stated that a candidate whose narrowed `source` is not a non-empty string is
+  **excluded from peer grouping** (neither matched nor counted), because `sourceToBareId(undefined)`
+  returns the literal `"undefined"` (`policy.js:158`) and would otherwise look like a peer on a third
+  site, manufacturing a discrediting `price_undercut`. Added the §5.2 peer-selection case.
+
+Class-sweep fixes made in the same round (not separate findings): the §3.2 `analyzeAll` signature
+`analyzeAll(candidates, …)` and §3.4's "byte-identical" ranking claim were the two sibling instances
+of F4.2's and F4.3's classes and are fixed above. The §5.2 `trust.test.js` case count moved from ~29
+to ~30 for the added peer-selection case. `reason` (a "carried to implementation" note, not a
+finding) is left as-is: its producer is the same helper-not-itemized treatment `history.js`'s `reason`
+gets, so declaring it for trust alone would be class-inconsistent.
+
+Marker at 5 (fourth reviewed revision).
+
+### v6 (round-5 triage — structural sweep)
+Round 5 was again a structural-sweep round (classes `missing-declaration`, `stale-xref`, `other`). It
+returned 5 findings (1 MINOR, 4 NIT), all verified against source and all justified; no scope change,
+and none of the four settled Phase-1/Phase-2 decisions was reopened. Findings:
+
+- **F5.1** (§5.1) — `other`. §5.1's malformed-sample row said the engine's `verified_read > reviews_read`
+  drop leaves "no review signals"; §3.2 drops **both** counts, so `review_sample_too_small` fires and
+  only `unverified_review_share` is suppressed. Reworded to the true outcome (a test written to the old
+  wording would fail).
+- **F5.2** (§2, §11) — `stale-xref`. The count "~24" is right (`test/history.test.js` has 24 `test(`
+  calls; `testing-and-quality.md:24` records `24`), but the cite `workflows.md:196-201` says
+  "30-odd tests" (`workflows.md:200`), so it did not support the number. Added the correct cite
+  (`testing-and-quality.md:24`) and listed the already-stale `workflows.md:199-200` in §11.
+- **F5.3** (§4.1) — `missing-declaration`. §4.1 declared a change to `score.js`'s **exports** but named
+  none; no export is added (`validTrust` stays internal like `validHistory`; `MAX_REVIEWS_READ` is used
+  only inside it; §11 already says only `trust.js`'s exports-table row changes). Dropped "exports".
+- **F5.4** (§3.5) — `other`. §3.5 credited step 3 with all six `trust` fields, but `offsite` is produced
+  by the step-4 sibling (§3.1's input JSON, `deal-scout.md:104`'s `history` row). Restated as five
+  step-3 sub-fields + `offsite` from step 4.
+- **F5.5** (§3.1) — `other`. §3.1 defined `trust_assessment: null` as "no `trust` input key at all",
+  narrower than §3.2's `validate(raw)` (null for a non-object `trust`) and §5.2's `trust: []`/`"x"` →
+  `null`. Reworded to "no *usable* `trust` input". A genuine re-raise: round 4's clearing rested on the
+  very `validate` paragraph that creates the mismatch.
+
+Class-sweep fixes made in the same round (not separate findings — the four "carried to implementation"
+notes, each an instance of one of the three swept classes):
+
+- **`price_gap_pct` / `rating_gap` undefined** (§3.1) — `missing-declaration`. Both output fields were
+  declared but never defined. Gave the sign and base in §3.1: `price_gap_pct =
+  (peer.price − candidate.price) / candidate.price × 100` (candidate base, same as `UNDERCUT_PCT`),
+  `rating_gap = source.rating − candidate.rating` (signed).
+- **`evidence-05.txt` scope mismatch** (§4.1) — `stale-xref`. §4.1 described the file as bead 05's
+  survey only, while §5.3 and §7 route bead 04's H6/H7 findings there too. Broadened §4.1's description.
+- **§6 R1 "the residual below"** — `stale-xref`. The phrase had no antecedent "below" inside §6; the
+  residual it means is the one §10 describes. Corrected to name §10.
+- **§5.4 "control 3"** — `stale-xref`. The two-test-flip precedent is control 10 (DS-2), not control 3
+  (DS-1, whose recorded deviation was flipping on a different path —
+  [`testing-and-quality.md:67-90`](../../docs/context/testing-and-quality.md#L67-L90)). Corrected.
+
+Marker at 6 (fifth reviewed revision).
+
+### v7 (round-6 triage — structural sweep)
+Round 6 was again a structural-sweep round (classes `missing-declaration`, `stale-xref`, `other`;
+`other` reported CLOSED). It returned 2 findings (1 MINOR, 1 NIT), both verified against source and
+both justified; no scope change, and none of the four settled Phase-1/Phase-2 decisions was reopened.
+Findings:
+
+- **F6.1** (§3.1, §3.2, §5.2) — `missing-declaration`. The single `peer` the block emits had no
+  selection rule when >1 candidate on another site shares the `product_key` (`price_gap_pct`/
+  `rating_gap` were undefined for that input), and its `rating_gap` was undefined when the candidate
+  carries no `rating` — a determinism gap in the R6-deterministic layer. Fixed by naming the rule
+  (**first peer under `betterThan`'s comparison** — lexicographic `source`, then raw-array index,
+  [score.js:275-280], the repo's one ordering rule) in §3.1, stating in §3.2 that the peer-derived
+  signals read the whole peer set while the block surfaces that one deterministic peer, giving the
+  symmetric `null`-gap rule to `offsite.rating_gap`, and adding the §5.2 multi-peer-selection and
+  no-`rating` cases.
+- **F6.2** (§3.8) — `stale-xref`. The bullet defending `signals`-not-`flags` cited "the §5.2
+  knob/flag defaults test ([score.js:388-407])". That test does not exist — §5.2 asserts only
+  `trust.js`'s **knob** defaults (inside `trust.test.js`), and `score.js:388-407` is the
+  `module.exports` list. Replaced the false guard with the true consequence (two producers for
+  `flags`, a flag's origin no longer one file).
+
+Class-sweep fixes made in the same round (not separate findings — the three round-6 "carried to
+implementation" notes, each a stale claim against the plan's own revised text):
+
+- **§3.1 `facts` / §5.1 output-`facts` "capped" wording** — `stale-xref`. §3.2 bounds the engine's
+  `reviews_read`/`verified_read` to non-negative integers, deliberately **not** capped at
+  `MAX_REVIEWS_READ` (only the report-side `validTrust` copy is). Narrowed both mentions to "the
+  strings sanitized+capped, the counts bounded" so an implementer is not left expecting a cap.
+- **§3.7 caveat sentence** — `stale-xref`. "the caveat **verbatim** — plus one sentence the skill must
+  not paraphrase away: *absence of a signal is not proof of authenticity*" duplicated a sentence
+  already inside `CAVEAT` (§3.1). Recast as one clause: the caveat already carries it.
+- **§5.4 "Expected margin"** — `stale-xref`. The margin named only control 13 as the two-test flip,
+  but control 11's own bullet names two failing tests too. Restated as "11 and 13 each flip two
+  tests".
+
+Marker at 7 (sixth reviewed revision).
+
+**v7 (converged) — round 7 terminal review.** Round 7 returned `VERDICT: NO_FURTHER_FINDINGS`
+(0 findings: no BLOCKER/MAJOR/MINOR/NIT). The plan was cross-reviewed over rounds 1–7; round 7, the
+terminal round, found nothing left that an implementer resolving by the surrounding pattern, the
+compiler, or the tests would not resolve — both swept classes (`missing-declaration`, `stale-xref`)
+reported CLOSED. **The version is held at 7** — a terminal round makes no content change, only the
+header status flip to `status=converged`. Full record: `review/round-7/triage.md` and
+`review/round-7/changelog.md`.
