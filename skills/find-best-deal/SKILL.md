@@ -82,9 +82,9 @@ the user did not supply left out; if the user supplied none of them, omit the fl
 carries only `candidates`, `gaps` and `blocked`, so the requirement is not in it**; without this flag the
 budget gate, the `over_budget` flag and both deadline-dependent verdict branches never fire.
 
-That one command validates and ranks the candidates (`score.js`), runs the price-history verdict over the
-same raw candidate array (`history.js`), and prints the merged report. Both receive the agent's direct
-output; neither feeds the other.
+That one command validates and ranks the candidates (`score.js`), runs the price-history verdict
+(`history.js`) and the trust assessment (`trust.js`) over the same raw candidate array, and prints the
+merged report. All three receive the agent's direct output; none feeds another.
 
 If it exits non-zero or prints nothing, the agent's JSON was malformed or a value failed validation —
 show the user the error rather than presenting a partial report as if it were complete.
@@ -103,6 +103,16 @@ Report, in this order:
   better alternative exists.
 - **Price history** — the buy-now / wait / no-signal verdict, its confidence, and the typical-low window.
   Say that these are estimates, not promises, and that "no reliable pattern" is a real answer.
+- **Authenticity** — how well justified the brand looks, from the merged `trust_assessment`. Report the
+  confidence in plain words (`high` / `medium` / `low` / `none`), then the signals behind it **in plain
+  words, never as identifiers** — "no brand storefront on the page", "the seller looks like a
+  third-party reseller", "another site lists the same product much dearer". Then the evidence actually
+  read: the brand, the seller name, and how many reviews were read. When `trust_assessment.peer` is
+  present, name the other marketplace and the price / rating gap. When `trust_assessment.offsite` is
+  present, give it with its rating and review count — that is the beyond-the-site evidence. **Quote the
+  `caveat` verbatim**; do not paraphrase it, and do not upgrade the wording — this is *evidence*, never a
+  verdict that the product is genuine. If `trust_assessment` is `null`, say the listing carried nothing
+  to assess, rather than letting its absence read as a pass.
 - **Flags** — `inflated_mrp`, `low_reviews`, `over_budget`, `third_party_seller`, `below_min_rating`,
   `offer_implausible` — in plain words, not as a bare list of identifiers.
 - **Gaps** — what could not be read.

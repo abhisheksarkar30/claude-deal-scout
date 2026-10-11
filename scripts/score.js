@@ -32,6 +32,15 @@ const MAX_STRING_LENGTH = 300;
 const MAX_NUMBER = 10000000;
 
 /**
+ * A `trust.reviews_read` / `trust.verified_read` count larger than this fails validation (§3.3).
+ *
+ * A validation bound, not a tunable: it lives here beside `MAX_NUMBER` rather than in `trust.js` so the
+ * import direction stays one-way (`trust.js` requires `score.js`, never the reverse — a reverse import
+ * would close a require cycle and load `trust.js` against a partial `score` export).
+ */
+const MAX_REVIEWS_READ = 50;
+
+/**
  * The canonical candidate field allowlist. Anything else the agent emits is dropped.
  *
  * The design plan never enumerated this list (it said only "title, price, rating, etc."), so it is
@@ -39,7 +48,8 @@ const MAX_NUMBER = 10000000;
  *
  * `history`, `must_haves_met`, `must_haves_reason` and `third_party_seller` are agent-supplied
  * judgements this script cannot re-derive: the first three are validated as values, the last is a
- * page-level call about who is selling.
+ * page-level call about who is selling. `trust` is validated here too, as the *input* half of a
+ * two-key contract — `trust.js` computes the `trust_assessment` half (§3.1).
  */
 const CANDIDATE_FIELDS = {
   title: 'string',
@@ -53,6 +63,7 @@ const CANDIDATE_FIELDS = {
   third_party_seller: 'boolean',
   offers: 'array',
   history: 'object',
+  trust: 'object',
   must_haves_met: 'boolean',
   must_haves_reason: 'string',
 };
@@ -133,6 +144,92 @@ function validHistory(history) {
 }
 
 /**
+ * The optional off-site half of a `trust` input: `{ source, rating, count }`, all three required.
+ *
+ * All-or-nothing, unlike the top-level `trust` fields: a partially-populated off-site result is not a
+ * weaker evidence, it is a different source than the id claims (§3.3).
+ */
+function validOffsite(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  if (typeof raw.source !== 'string' || raw.source === '') return null;
+  if (typeof raw.rating !== 'number' || !Number.isFinite(raw.rating) || raw.rating < 0 || raw.rating > 5) {
+    return null;
+  }
+  if (!isBoundedNumber(raw.count)) return null;
+  return {
+    source: sanitize(raw.source).slice(0, MAX_STRING_LENGTH),
+    rating: raw.rating,
+    count: raw.count,
+  };
+}
+
+/** The sub-keys a `trust` input may carry. Anything else it emits is dropped and named (§3.3). */
+const TRUST_FIELDS = ['brand', 'seller', 'brand_store', 'reviews_read', 'verified_read', 'offsite'];
+
+/**
+ * Validate one `trust` input. Shape, type and bound checking only — the semantic rule (the confidence
+ * ladder, the signals) lives in `trust.js`, so one rule has one home.
+ *
+ * Returns `{ trust, dropped }`, or `null` when `raw` is not a plain object. That `null` is the "not
+ * attempted" side of §3.1's null-vs-`"none"` split, which `trust.js` mirrors: an object that survives
+ * here but carries no usable fact still reaches the engine and yields `brand_confidence: "none"`.
+ *
+ * Unlike `validHistory`, which destructures its known keys and silently ignores any others, the names
+ * of sub-keys that failed are reported so a bad agent emission shows up in the candidate's
+ * `dropped_fields` instead of vanishing.
+ *
+ * `verified_read <= reviews_read` is enforced by **dropping the pair, never correcting it** — the same
+ * uniform "malformed input → no output" outcome `history` has. A dropped pair is not a dropped block:
+ * the rest of `trust`, and the candidate itself, survive.
+ */
+function validTrust(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+
+  const trust = {};
+  const dropped = [];
+
+  for (const field of ['brand', 'seller']) {
+    if (!(field in raw)) continue;
+    if (typeof raw[field] !== 'string') dropped.push(field);
+    else trust[field] = sanitize(raw[field]).slice(0, MAX_STRING_LENGTH);
+  }
+
+  if ('brand_store' in raw) {
+    if (typeof raw.brand_store === 'boolean') trust.brand_store = raw.brand_store;
+    else dropped.push('brand_store');
+  }
+
+  for (const field of ['reviews_read', 'verified_read']) {
+    if (!(field in raw)) continue;
+    const value = raw[field];
+    if (!Number.isInteger(value) || value < 0 || value > MAX_REVIEWS_READ) dropped.push(field);
+    else trust[field] = value;
+  }
+
+  if (
+    trust.reviews_read !== undefined &&
+    trust.verified_read !== undefined &&
+    trust.verified_read > trust.reviews_read
+  ) {
+    delete trust.reviews_read;
+    delete trust.verified_read;
+    dropped.push('reviews_read', 'verified_read');
+  }
+
+  if ('offsite' in raw) {
+    const offsite = validOffsite(raw.offsite);
+    if (offsite) trust.offsite = offsite;
+    else dropped.push('offsite');
+  }
+
+  for (const key of Object.keys(raw)) {
+    if (!TRUST_FIELDS.includes(key)) dropped.push(key);
+  }
+
+  return { trust, dropped };
+}
+
+/**
  * Validate one raw candidate: drop unknown fields, cap strings, bound numbers, re-check the URL,
  * scrub PII, and enforce the `must_haves_reason` "present only when false" invariant.
  *
@@ -177,6 +274,14 @@ function validateCandidate(raw, adapters) {
     } else if (field === 'history') {
       if (validHistory(value)) candidate.history = value;
       else dropped.push(field);
+    } else if (field === 'trust') {
+      const validated = validTrust(value);
+      if (validated) {
+        candidate.trust = validated.trust;
+        dropped.push(...validated.dropped);
+      } else {
+        dropped.push(field);
+      }
     }
   }
 

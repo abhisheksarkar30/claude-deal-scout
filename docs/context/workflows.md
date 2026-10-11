@@ -2,7 +2,7 @@
 
 # Workflows
 
-Six flows. There are **no retries anywhere** in this plugin, and no transaction boundaries — nothing
+Seven flows. There are **no retries anywhere** in this plugin, and no transaction boundaries — nothing
 is written, so every flow is idempotent and a re-run is always safe. Where a step fails, the design
 choice is always "stop loudly" or "degrade honestly", never "retry" or "guess".
 
@@ -32,12 +32,13 @@ sequenceDiagram
   A->>C: read cart / wishlist / saved (per adapter)
   A->>C: search, shortlist ≤5/site, open product pages
   A->>C: history lookup per candidate (no adapter ships → skipped)
+  A->>C: off-site review lookup per candidate (no adapter ships → skipped)
   C-->>A: page text (untrusted)
   A-->>S: one fenced JSON: candidates / gaps / blocked
   Note over S,A: every browser call above passed through guard pre/post
   S->>R: stdin = agent JSON, --requirement '<json>'
   R-->>S: merged report JSON
-  S->>U: best product, best deal, table, own lists, history, flags, gaps, blocked
+  S->>U: best product, best deal, table, own lists, history, authenticity, flags, gaps, blocked
   Note over S,U: "nothing was bought or changed"
 ```
 
@@ -115,7 +116,7 @@ behaviour. See [docs/SECURITY.md](../../docs/SECURITY.md).
 Runs on every `report.js` run (`sites/` only) and on every **in-scope** guard invocation (both
 `sites/` and `browsers/`). The guard loads the registries only *after* the `agent_type` scope check,
 so an out-of-scope MCP call never touches one
-([guard.js:315-317](../../scripts/guard.js#L315-L317), [report.js:82](../../scripts/report.js#L82)).
+([guard.js:315-317](../../scripts/guard.js#L315-L317), [report.js:85](../../scripts/report.js#L85)).
 
 ```mermaid
 flowchart LR
@@ -123,7 +124,7 @@ flowchart LR
   J -- invalid JSON --> X["throw → exit 2"]
   J --> V["validateSites / validateBrowsers<br/>per-adapter schema"]
   V -- fails --> X
-  V --> S["whole-set checks:<br/>covers ids exist,<br/>history allow vs adversarial paths,<br/>unique prefix + tool per browser"]
+  V --> S["whole-set checks:<br/>covers ids exist,<br/>non-shop allow vs adversarial paths,<br/>unique prefix + tool per browser"]
   S -- fails --> X
   S --> OK["adapters in load order"]
 ```
@@ -132,31 +133,33 @@ This is the plugin's fail-closed posture in one picture: **a bad adapter stops t
 proceeding with a policy you did not intend. If the plugin suddenly refuses everything after a
 `sites/` or `browsers/` edit, the adapter is the first suspect. Details in
 [site-adapters.md](site-adapters.md); the browser registry's own checks are at
-[policy.js:328-384](../../scripts/policy.js#L328-L384).
+[policy.js:336-392](../../scripts/policy.js#L336-L392).
 
-## 5. Report pipeline — validate, rank, history, merge
+## 5. Report pipeline — validate, rank, history, trust, merge
 
 Entry: `node scripts/report.js --requirement <json> < agent-output.json`. The key structural fact is
-that **`score.js` and `history.js` both receive the agent's raw candidate array; neither feeds the
-other**, and their outputs are re-joined on `candidate.index` because validation may drop candidates
-and the two arrays are therefore not positionally aligned
-([report.js:34-50](../../scripts/report.js#L34-L50)).
+that **`score.js`, `history.js` and `trust.js` all receive the agent's raw candidate array; none
+feeds another**, and their outputs are re-joined on `candidate.index` because validation may drop
+candidates and the three arrays are therefore not positionally aligned
+([report.js:35-57](../../scripts/report.js#L35-L57)).
 
 ```mermaid
 flowchart TB
   IN["agent JSON (stdin)<br/>+ requirement (--requirement)"] --> SC["score(requirement, candidates)"]
   IN --> HI["analyzeAll(candidates, deadline, saleCalendar)"]
+  IN --> TR["analyzeTrust(candidates)"]
   SC --> OUT["merge on candidate.index"]
   HI --> OUT
-  OUT --> REP["report JSON<br/>candidates + price_history, best_product, best_deal,<br/>product_groups, requirement, gaps, blocked"]
+  TR --> OUT
+  OUT --> REP["report JSON<br/>candidates + price_history + trust_assessment,<br/>best_product, best_deal, product_groups, requirement, gaps, blocked"]
 ```
 
 Inside `score()`: per-candidate validation (drop unknown fields, cap strings, bound numbers,
-`checkUrl` the URL, sanitize PII, enforce the `must_haves_reason` invariant) → `effective_price` and
-`rating_adj` → flags → must-haves gate → min–max normalised score → `best_product`; then a separate
-filter for `best_deal` (must-haves **and** `rating_adj ≥ MIN_RATING` **and** budget) sorted by
-`effective_price`. Ties break lexicographically on `source`, then on array index
-([score.js:292-382](../../scripts/score.js#L292-L382)).
+`checkUrl` the URL, sanitize PII, enforce the `must_haves_reason` invariant, validate the `trust`
+input) → `effective_price` and `rating_adj` → flags → must-haves gate → min–max normalised score →
+`best_product`; then a separate filter for `best_deal` (must-haves **and** `rating_adj ≥ MIN_RATING`
+**and** budget) sorted by `effective_price`. Ties break lexicographically on `source`, then on array
+index ([score.js:397-487](../../scripts/score.js#L397-L487)).
 
 **Failure mode:** malformed stdin or a bad `--requirement` exits 2 on stderr. A partial report is
 never printed — deliberate, because the validation is also the injection control.
@@ -197,5 +200,50 @@ documented as a real answer rather than a failure.
 
 **It never runs.** No history adapter ships, so no candidate ever carries a `history` key, every
 call returns `null`, and the report shows a "no price history found" gap. The engine is fully
-implemented and pinned by 30-odd tests; only the data source is missing —
-[site-adapters.md](site-adapters.md#no-history-adapter-ships-today).
+implemented and pinned by 24 tests; only the data source is missing —
+[site-adapters.md](site-adapters.md#no-history-or-review-adapter-ships-today).
+
+## 7. Brand-authenticity ladder
+
+Owner: [`confidenceFor()`, trust.js:297-304](../../scripts/trust.js#L297-L304), wrapped by
+[`analyze`](../../scripts/trust.js#L333-L397). Like flow 6 the rungs are evaluated **in a fixed order
+and the order is the contract**; unlike flow 6 it reads the *whole* candidate array first, to find
+cross-site peers.
+
+```mermaid
+flowchart TB
+  S["candidate.trust + the raw candidate array"] --> V{"validate(trust)"}
+  V -- "not an object" --> Null["null → trust_assessment omitted, no output, no throw"]
+  V -- "object (possibly empty)" --> P["peerSets: same product_key, different bare adapter id"]
+  P --> G["signalsFor: 3 discrediting + 5 informational"]
+  G --> R0{"no evidence AND<br/>no discrediting signal?"}
+  R0 -- yes --> N["none: read, nothing justifying found"]
+  R0 -- no --> R1{"≥2 supports AND<br/>no discrediting signal?"}
+  R1 -- yes --> H["high"]
+  R1 -- no --> R2{"exactly 1 support AND<br/>no discrediting signal?"}
+  R2 -- yes --> M["medium"]
+  R2 -- no --> L["low"]
+```
+
+Five things about this flow are load-bearing:
+
+- **It cannot re-rank anything.** `trust_assessment` is merged onto the candidate *after* `score()`
+  has fixed `best_product` / `best_deal` / `product_groups`; a `low` label on the top-ranked candidate
+  leaves the ranking alone. That is deliberate ([data-model.md](data-model.md#trustjs-output-shape)),
+  and the identical-ranking test in [test/report.test.js](../../test/report.test.js) is the guard
+  against a later "helpful" change.
+- **The informational five never move the label.** `no_brand_store` in particular is normal on
+  Flipkart, which has no storefront concept — treating it as evidence of fraud is the failure mode the
+  split exists to prevent.
+- **Supports are deliberately fail-closed.** `third_party_seller: false` is "clearly first-party" and
+  counts; an *absent* `third_party_seller` is "couldn't tell" and does not
+  ([supportsFor, trust.js:225-230](../../scripts/trust.js#L225-L230)).
+- **Peers come from the bare adapter id, not from `score.js`'s `product_groups`.** Two account lists
+  on one site group for display but are not peers here; the check needs a *different* site
+  ([peerSets, trust.js:250-273](../../scripts/trust.js#L250-L273)).
+- **Degradation is silent and by design.** A candidate with no `trust` input yields `null`; the
+  off-site half is absent for every candidate because no review adapter ships. Neither is an error and
+  neither is a gap note.
+
+**Retries:** none — the ladder always returns one of exactly four labels, so there is nothing to retry
+and no "unknown" state.

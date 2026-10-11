@@ -16,23 +16,25 @@ const path = require('node:path');
 /**
  * The tool allowlist and the browser server prefixes are deliberately **not** here. They are
  * per-browser data, read from `browsers/*.json` by `loadBrowsers` and passed into `checkTool`.
- * Claude in Chrome is the shipped adapter; adding a browser is adding a file, never editing this
- * one. The URL policy below stays in this file, because `sites/*.json` holds the per-site data for
- * it and the two registries answer different questions.
+ * Two browsers ship (`claude-in-chrome`, `chrome-devtools`) and the guard allows their union;
+ * adding a third is adding a file, never editing this one. The URL policy below stays in this file,
+ * because `sites/*.json` holds the per-site data for it and the two registries answer different
+ * questions.
  */
 
 /**
  * Path vocabulary marking an account- or mutation-bearing URL. `deny` entries in an adapter are
- * drawn from this list; the same list drives the adversarial suite `loadSites` tests history
- * adapters against.
+ * drawn from this list; the same list drives the adversarial suite `loadSites` tests non-shop
+ * adapters (`history`, `review`) against.
  */
 const DENY_VOCABULARY = ['add', 'buy', 'checkout', 'signin', '/ap/', '/gp/css/', 'payment', 'address', 'order'];
 
 /**
  * One genuinely mutating path per `DENY_VOCABULARY` entry (the plan's `/add`, `/ap/signin` and
- * `/gp/css/order` are a subset of this). A `history` adapter whose `allow` regexes match any of
- * these is rejected at load — tested behaviourally against these paths, never by inspecting the
- * regex source, so an innocent pattern is not rejected for merely containing a vocabulary word.
+ * `/gp/css/order` are a subset of this). A non-shop adapter (`history`, `review`) whose `allow`
+ * regexes match any of these is rejected at load — tested behaviourally against these paths, never
+ * by inspecting the regex source, so an innocent pattern is not rejected for merely containing a
+ * vocabulary word.
  */
 const ADVERSARIAL_PATHS = [
   '/add',
@@ -192,20 +194,20 @@ function isHostname(v) {
   return isNonEmptyString(v) && /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(v);
 }
 
-const REQUIRED_URLS = { shop: ['search', 'cart', 'wishlist'], history: ['lookup'] };
+const REQUIRED_URLS = { shop: ['search', 'cart', 'wishlist'], history: ['lookup'], review: ['lookup'] };
 
 /**
  * Validate parsed adapter objects (already-shaped `{ file, data }` entries). Throws on the first
  * problem; `loadSites`' caller turns that into a fail-closed exit.
  *
- * Two checks need the whole set, so they run after every adapter is individually valid:
- * a history adapter's `covers` must name loaded shop adapters, and its `allow` regexes must not
- * match anything in the adversarial path suite.
+ * Two checks need the whole set, so they run after every adapter is individually valid: a non-shop
+ * adapter's `covers` must name loaded shop adapters, and its `allow` regexes must not match anything
+ * in the adversarial path suite.
  */
 function validateSites(entries) {
   const adapters = [];
   const seenIds = new Map();
-  const historyFiles = new Map();
+  const coveredFiles = new Map();
   const shops = [];
 
   for (const { file, data } of entries) {
@@ -215,7 +217,9 @@ function validateSites(entries) {
     const { id, kind, label, hosts, allow, deny, urls, notes } = data;
     if (!isNonEmptyString(id)) fail(where, 'missing string "id"');
     if (seenIds.has(id)) fail(where, `duplicate adapter id "${id}" (also in sites/${seenIds.get(id)})`);
-    if (kind !== 'shop' && kind !== 'history') fail(where, `"kind" must be "shop" or "history", got ${JSON.stringify(kind)}`);
+    if (kind !== 'shop' && kind !== 'history' && kind !== 'review') {
+      fail(where, `"kind" must be "shop", "history" or "review", got ${JSON.stringify(kind)}`);
+    }
     if (!isNonEmptyString(label)) fail(where, 'missing string "label"');
     if (!Array.isArray(hosts) || hosts.length === 0) fail(where, '"hosts" must be a non-empty array');
     if (hosts.some((h) => !isHostname(h))) {
@@ -244,20 +248,23 @@ function validateSites(entries) {
       notes: (notes || []).slice(),
     };
 
-    if (kind === 'history') {
+    // Every non-shop kind — `history`, `review` — is captured here with its `covers` and inherits
+    // these checks unchanged, so adding a kind adds no guarantee the codebase does not already
+    // enforce (§3.6, R5).
+    if (kind !== 'shop') {
       if (!isStringList(data.covers) || data.covers.length === 0) {
-        fail(where, 'a history adapter needs a non-empty "covers" array of shop-adapter ids');
+        fail(where, `a ${kind} adapter needs a non-empty "covers" array of shop-adapter ids`);
       }
       const offending = ADVERSARIAL_PATHS.filter((p) => allow.some((src) => new RegExp(src).test(p)));
       if (offending.length > 0) {
         fail(
           where,
-          `"allow" would permit mutating path(s) ${offending.join(', ')} — a history adapter may not ` +
+          `"allow" would permit mutating path(s) ${offending.join(', ')} — a ${kind} adapter may not ` +
             'cover account or mutation paths',
         );
       }
       adapter.covers = data.covers.slice();
-      historyFiles.set(id, file);
+      coveredFiles.set(id, file);
     } else {
       shops.push(adapter);
     }
@@ -268,10 +275,12 @@ function validateSites(entries) {
 
   const shopIds = new Set(shops.map((s) => s.id));
   for (const adapter of adapters) {
-    if (adapter.kind !== 'history') continue;
+    // The gate that is easy to miss: without it the `covers`-must-name-a-loaded-shop rule runs for
+    // `history` only, and a `review` adapter with a typo'd shop id would load cleanly.
+    if (adapter.kind === 'shop') continue;
     for (const covered of adapter.covers) {
       if (!shopIds.has(covered)) {
-        fail(`sites/${historyFiles.get(adapter.id)}`, `"covers" names "${covered}", which is not a loaded shop adapter`);
+        fail(`sites/${coveredFiles.get(adapter.id)}`, `"covers" names "${covered}", which is not a loaded shop adapter`);
       }
     }
   }

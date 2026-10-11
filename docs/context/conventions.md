@@ -9,8 +9,11 @@ in source.
 ## Naming & layout
 
 - One file per concern under `scripts/`, each CommonJS, each a thin layer: `policy` (pure
-  decisions) → `guard` (hook I/O) / `score` / `history` → `report` (merge). No script reaches into
-  another's internals; only the documented exports are used.
+  decisions) → `guard` (hook I/O) / `score` / `history` / `trust` → `report` (merge). No script
+  reaches into another's internals; only the documented exports are used. `trust.js` is the one
+  sibling that imports another engine's public surface (`MAX_NUMBER`, `MAX_STRING_LENGTH`,
+  `sanitize` from `score.js`) rather than only `policy.js` — which is why `MAX_REVIEWS_READ` lives in
+  `score.js`: the direction is one-way and a reverse import would close a require cycle.
 - **Zero dependencies, permanently.** No `dependencies`, no `devDependencies`, no `npm install`.
   Only `node:`-prefixed builtins. [CLAUDE.md](../../CLAUDE.md) states this as a project rule.
 - Module shape, in this order: `'use strict';` → file-level JSDoc block → `require`s → exported
@@ -20,8 +23,12 @@ in source.
   `W_PRICE`, `W_RATING`, `MIN_RATING`, `PRIOR_MEAN`, `PRIOR_N`, `INFLATED_MRP_PCT`, `MIN_REVIEWS`,
   `MAX_STRING_LENGTH`, `MAX_NUMBER` ([score.js:18-32](../../scripts/score.js#L18-L32));
   `MIN_POINTS`, `MAX_POINTS`, `BUY_WITHIN_PCT`, `IMPLAUSIBLE_BELOW_PCT`
-  ([history.js:17-26](../../scripts/history.js#L17-L26)). `test/score.test.js` asserts the
-  plan-pinned defaults of these knobs — changing one is a deliberate act with a test to update.
+  ([history.js:17-26](../../scripts/history.js#L17-L26)); `MIN_REVIEWS_READ`, `UNVERIFIED_SHARE_MAX`,
+  `UNDERCUT_PCT`, `RATING_GAP`, `BRAND_CONFIDENCES`, `SIGNALS`, `DISCREDITING_SIGNALS`, `CAVEAT`
+  ([trust.js:27-60](../../scripts/trust.js#L27-L60)). `test/score.test.js` and
+  `test/trust.test.js` assert the plan-pinned defaults of these knobs — changing one is a deliberate
+  act with a test to update. A validation **bound** rather than a knob (`MAX_REVIEWS_READ`) is
+  deliberately *not* exported.
 - Data files are data, not code: a new site is a new `sites/*.json`, a new browser is a new
   `browsers/*.json`, a shifted sale window is an edit to `data/sale-calendar.json`.
 - Naming follows the codebase's own vocabulary — `adapter`, `covers`, `allow`/`deny`, `candidate`,
@@ -31,9 +38,9 @@ in source.
 ## Error handling
 
 - **Fail closed, loudly, with a located message.** A bad adapter throws
-  `` `sites/${file}: <what is wrong>` `` ([policy.js:165-167](../../scripts/policy.js#L165-L167)).
+  `` `sites/${file}: <what is wrong>` `` ([policy.js:167-169](../../scripts/policy.js#L167-L169)).
   `report.js` prints `deal-scout report: <message>` to stderr and returns 2 rather than emitting a
-  partial report ([report.js:86-89](../../scripts/report.js#L86-L89)).
+  partial report ([report.js:89-95](../../scripts/report.js#L89-L95)).
 - **The hook's catch is load-bearing, not decoration.** Exit 2 is what blocks a tool call; every
   other non-zero exit fails open. So `guard.js` wraps everything and converts any error to exit 2
   ([guard.js:181-184](../../scripts/guard.js#L181-L184), comment at [:19-21](../../scripts/guard.js#L19-L21)).
@@ -66,11 +73,12 @@ Comments here carry the *why* and the *provenance*, not the what. Expect three r
 - Explicit notes about a deliberate trade-off, e.g. "first usable adapter" being a
   determinism/richness trade-off, or `tests seam only — see Review Notes`.
 
-> ⚠️ **R-numbers are overloaded.** In [docs/planning/DS-1-deal-scout-plugin.md](../../docs/planning/DS-1-deal-scout-plugin.md),
+> ⚠️ **R-numbers are overloaded.** In the DS-1 plan (`docs/planning/DS-1-deal-scout-plugin.md`),
 > `R1`–`R10` in **§2** are *requirements*, while `R1`–`R9` in **§6** are *residual risks*.
-> [docs/SECURITY.md](../../docs/SECURITY.md) uses `R1`–`R11` for residual risks and never for
+> [docs/SECURITY.md](../../docs/SECURITY.md) uses `R1`–`R12` for residual risks and never for
 > requirements. A bare "(R4)" in a code comment means the residual-risk numbering, matching
-> SECURITY.md.
+> SECURITY.md. **DS-3's own plan reuses the same letters for its own §6 risks** (`R1`–`R6`), so a
+> bare "(R1)" in `trust.js` means *the DS-3 plan's* R1, not SECURITY.md's.
 
 ## Logging & observability
 
@@ -78,15 +86,16 @@ No logging library, and no `console.*` anywhere in `scripts/`. Deliberate stream
 
 | Stream | Carries |
 |---|---|
-| stdout | the report JSON ([report.js:84](../../scripts/report.js#L84)); the selftest OK line ([guard.js:288](../../scripts/guard.js#L288)); the PostToolUse `{"decision":"block",…}` JSON ([guard.js:151-161](../../scripts/guard.js#L151-L161)) |
+| stdout | the report JSON ([report.js:92](../../scripts/report.js#L92)); the selftest OK line ([guard.js:288](../../scripts/guard.js#L288)); the PostToolUse `{"decision":"block",…}` JSON ([guard.js:151-161](../../scripts/guard.js#L151-L161)) |
 | stderr | every block reason, prefixed `claude-deal-scout guard: ` ([guard.js:65](../../scripts/guard.js#L65)); `report.js` errors; selftest MISS lines |
 | exit code | `0` = allow / success, `2` = blocked (the only blocking code) |
 
 ## Testing conventions
 
 - **`node:test` + `node:assert`, one test file per concern**: `test/policy.test.js`,
-  `test/guard.test.js`, `test/score.test.js`, `test/history.test.js`, `test/report.test.js`,
-  `test/adapter.test.js`, `test/browser.test.js`. No framework, no fixtures library, no mocks.
+  `test/guard.test.js`, `test/score.test.js`, `test/history.test.js`, `test/trust.test.js`,
+  `test/report.test.js`, `test/adapter.test.js`, `test/browser.test.js`. No framework, no fixtures
+  library, no mocks.
   (`policy.js` owns two of them — `policy.test.js` for the URL policy, `browser.test.js` for the
   browser registry — because the two registries are deliberately separate concerns.)
 - Test names are **full behavioural sentences**, including the negative case:
@@ -98,7 +107,8 @@ No logging library, and no `console.*` anywhere in `scripts/`. Deliberate stream
 - `test/adapter.test.js` covers any adapter file automatically by reading `sites/` — adding an
   adapter needs no new test.
 - Every guard test is expected to have a **negative control**: remove the defence and the test must
-  fail. The list is plan §5.4 (10 controls, mutation-and-revert).
+  fail. The list is plan §5.4 — now **14** controls across DS-1 (1–8), DS-2 (9–10) and DS-3 (11–14),
+  all mutation-and-revert, all executed.
 - Run with `npm test` (`node --test`). No coverage tool, no lint config, no formatter config
   exists in the repo.
 
@@ -114,19 +124,24 @@ style, read off the source:
 ## Commits & branches
 
 - Conventional commits, **one commit per bead**, message naming the bead id:
-  `feat(DS-1): history stats and verdict engine (br-DS-1-05)`, `docs(DS-1): … (br-DS-1-04)`.
-  See `git log` on `feat/ds-1-deal-scout-plugin`.
-- Branch: `feat/ds-1-deal-scout-plugin` off `main`.
+  `feat(DS-1): history stats and verdict engine (br-DS-1-05)`, `docs(DS-3): … (br-DS-3-07)`.
+  See `git log`.
+- Branch: **one `feat/ds-<n>-<slug>` branch per story, cut from `origin/main`** — not from local
+  `main`, which is stale, and not from the previous story's branch. `feat/ds-1-deal-scout-plugin`
+  (now merged as PR #1), `feat/ds-2-vendor-agnostic-browser-tools` (#2) and
+  `feat/ds-3-brand-authenticity-and-review-trust` were each cut that way. `CLAUDE.md`'s
+  "Branch: `feat/ds-1-deal-scout-plugin` off `main`" line is the DS-1-era wording of this rule and
+  is stale as a literal.
 - **Bump `version` in [.claude-plugin/plugin.json](../../.claude-plugin/plugin.json) on every
   change to this plugin** — an installed cache copy goes stale otherwise
   ([CLAUDE.md](../../CLAUDE.md)). Note the two manifests version independently:
-  `plugin.json` is at `0.1.2`, `package.json` at `0.1.0` and never deployed.
+  `plugin.json` is at `0.1.14`, `package.json` at `0.1.0` and never deployed.
 
 ## Documentation conventions
 
-- `docs/planning/DS-1-deal-scout-plugin.md` is the **source of truth for design** and carries a
-  `<!-- version=N, status=converged -->` header plus a Change History of triage rounds. Code
-  comments point into it by section.
-- Raw findings go to `.beads/DS-1/evidence-*.txt`; transient review rounds live under
-  `docs/planning/review/` and `docs/planning/impl-review/` (gitignored directory names
-  `review/`, `impl-review/`).
+- The plans under [docs/planning/](../../docs/planning/) are the **source of truth for design**; each
+  carries a `<!-- version=N, status=converged -->` header plus a Change History of triage rounds.
+  Code comments point into them by section, and a comment in a DS-3 file cites the DS-3 plan.
+- Raw findings go to `.beads/{ticket-id}/evidence-*.txt`; transient review rounds live under
+  `docs/planning/review/` and `docs/planning/impl-review/` (gitignored directory names `review/`,
+  `impl-review/`).

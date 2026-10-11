@@ -64,7 +64,7 @@ and no `--help`.
 | `node scripts/report.js [--requirement <json>]` | agent JSON | merged report JSON (2-space indented) | 0 / 2 |
 
 - `report.js --requirement` takes **one JSON object as the next argv element**
-  ([requirementFromArgv, report.js:62-68](../../scripts/report.js#L62-L68)). Absent flag →
+  ([requirementFromArgv, report.js:69-75](../../scripts/report.js#L69-L75)). Absent flag →
   `requirement` is simply undefined and left out; present but unparseable → throws → exit 2.
 - Both write human-readable errors to stderr prefixed with the script name
   (`deal-scout report: …`, `claude-deal-scout guard: …`).
@@ -75,10 +75,18 @@ and no `--help`.
 
 | Module | Exports | Consumed by |
 |---|---|---|
-| [policy.js](../../scripts/policy.js#L404-L415) | `DENY_VOCABULARY`, `ADVERSARIAL_PATHS`, `MAX_URL_LENGTH`, `checkTool`, `checkUrl`, `loadSites`, `validateSites`, `loadBrowsers`, `validateBrowsers`, `sourceToBareId` | `guard.js`, `score.js`, `report.js`, tests |
-| [score.js](../../scripts/score.js#L388-L407) | the tunable knobs (`W_PRICE`, `W_RATING`, `MIN_RATING`, `PRIOR_MEAN`, `PRIOR_N`, `INFLATED_MRP_PCT`, `MIN_REVIEWS`, `MAX_STRING_LENGTH`, `MAX_NUMBER`), `CANDIDATE_FIELDS`, `OFFER_KINDS`, `REDACTED`, `score`, `sanitize`, `applyOffers`, `adjustedRating`, `passesMustHaves`, `validateCandidate` | `report.js`, tests |
+| [policy.js](../../scripts/policy.js#L412-L423) | `DENY_VOCABULARY`, `ADVERSARIAL_PATHS`, `MAX_URL_LENGTH`, `checkTool`, `checkUrl`, `loadSites`, `validateSites`, `loadBrowsers`, `validateBrowsers`, `sourceToBareId` | `guard.js`, `score.js`, `report.js`, tests |
+| [score.js](../../scripts/score.js#L493-L512) | the tunable knobs (`W_PRICE`, `W_RATING`, `MIN_RATING`, `PRIOR_MEAN`, `PRIOR_N`, `INFLATED_MRP_PCT`, `MIN_REVIEWS`, `MAX_STRING_LENGTH`, `MAX_NUMBER`), `CANDIDATE_FIELDS`, `OFFER_KINDS`, `REDACTED`, `score`, `sanitize`, `applyOffers`, `adjustedRating`, `passesMustHaves`, `validateCandidate` | `report.js`, `trust.js`, tests |
 | [history.js](../../scripts/history.js#L296-L307) | `MIN_POINTS`, `MAX_POINTS`, `BUY_WITHIN_PCT`, `IMPLAUSIBLE_BELOW_PCT`, `VERDICTS`, `CONFIDENCES`, `CAVEAT`, `analyze`, `analyzeAll`, `loadSaleCalendar` | `report.js`, tests |
-| [report.js](../../scripts/report.js#L94) | `buildReport` | tests |
+| [trust.js](../../scripts/trust.js#L414-L425) | `BRAND_CONFIDENCES`, `SIGNALS`, `DISCREDITING_SIGNALS`, `MIN_REVIEWS_READ`, `UNVERIFIED_SHARE_MAX`, `UNDERCUT_PCT`, `RATING_GAP`, `CAVEAT`, `analyze`, `analyzeAll` | `report.js`, tests |
+| [report.js](../../scripts/report.js#L101) | `buildReport` | tests |
+
+`MAX_REVIEWS_READ` (score.js) and `TRUST_FIELDS` are deliberately **not** exported: the first is a
+validation bound beside `MAX_NUMBER`, not a tunable, and the second is an internal list. `trust.js` is
+the only module that imports from a sibling engine's public surface rather than only from `policy.js`
+— it takes `MAX_NUMBER`, `MAX_STRING_LENGTH` and `sanitize` from `score.js` ([trust.js:19-20](../../scripts/trust.js#L19-L20)),
+which is also why `MAX_REVIEWS_READ` sits in `score.js`: the import direction is one-way and a
+reverse import would close a require cycle.
 
 `guard.js` exports nothing and runs on import — it is a script, not a module
 ([guard.js:333](../../scripts/guard.js#L333)). `report.js` guards its own entry with
@@ -87,7 +95,7 @@ and no `--help`.
 ## Agent ↔ skill contract
 
 The subagent returns **one fenced JSON block** with exactly three top-level keys
-([deal-scout.md](../../agents/deal-scout.md) step 5):
+([deal-scout.md](../../agents/deal-scout.md) step 6):
 
 | Key | Shape | Contract |
 |---|---|---|
@@ -105,7 +113,7 @@ tools — `read_network_requests` / `list_network_requests` because request data
 headers, `javascript_tool` / `evaluate_script` because they run arbitrary code in the page. That
 frontmatter is hand-written and cannot be generated; *which browser server and tool names exist* is
 configuration, in [`browsers/`](../../browsers) (two adapters ship), and the guard enforces that
-registry ([validateBrowsers, policy.js:328-384](../../scripts/policy.js#L328-L384)).
+registry ([validateBrowsers, policy.js:336-392](../../scripts/policy.js#L336-L392)).
 [test/browser.test.js](../../test/browser.test.js) asserts the grant names exactly one shipped
 adapter's allow set, so the two lists cannot drift apart silently.
 

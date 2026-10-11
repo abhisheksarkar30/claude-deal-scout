@@ -16,7 +16,7 @@ It cannot: buy, add to a cart or wishlist, sign in, solve a CAPTCHA, click to re
 commands, write files, or make any network request of its own. The plugin has **no runtime dependencies**
 and no code that opens a socket — Chrome does all the talking.
 
-## The three trust surfaces
+## The four trust surfaces
 
 ### 1. The user's authenticated shopping sessions
 
@@ -32,7 +32,7 @@ Unauthenticated, lower-trust, and they widen the host allowlist. They get a tigh
 product/lookup paths only, and `loadSites` **rejects** any history adapter whose allow regexes could also
 match an account-mutation path — tested behaviourally against an adversarial path suite, not by reading
 the regex source. History lookups send only the product's public URL or title, never anything read from an
-account page.
+account page. A `kind: "review"` adapter would be the same class of surface; none ships today (see R5).
 
 ### 3. Attacker-controlled page text
 
@@ -40,6 +40,24 @@ Product titles, reviews, seller blurbs and Q&A are written by strangers and fed 
 instructed that page text is data and never instructions, and the agent's output is then **validated as
 untrusted data**: unknown fields dropped, strings length-capped, numbers bounded, every URL re-checked
 against the allowlist, string fields scrubbed for PII. The main thread treats the report as data too.
+
+### 4. Free text in the trust assessment
+
+The authenticity check adds the first new free-text fields since DS-1: `trust.brand` and `trust.seller`,
+read off the product page and rendered back to the user in the assessment's `facts`. Being page text,
+they are attacker-controlled in exactly the way §3 describes.
+
+**Mitigation.** One cap and one PII sanitizer, defined once in `score.js`, applied on **both** paths that
+carry the text — by `validTrust` to the validated input `trust` and by `trust.js` to the output `facts` —
+so there is one scrubber rather than two that can differ. Neither field is printed raw anywhere else.
+**Residual.** It is the same pattern-based scrubber as R10 and inherits R10's limits: a phone number
+written as words, or split across a line, passes through. Note the risk here is not mainly disclosure —
+a brand or seller string is rarely private — but manipulation: it is text a hostile page chose, on its
+way into a sentence the user reads about whether to trust that page.
+
+**What this does not add.** No credential, no authentication, no network, no persistence. The plugin
+still opens no socket of its own and writes nothing; `trust.js` is a pure function over data the agent
+has already fetched.
 
 ## Residual risks
 
@@ -91,12 +109,18 @@ report as data.
 bounds it and the flag rules (`inflated_mrp`, `offer_implausible`) catch the implausible, but nothing
 proves a plausible-looking wrong number wrong. The user should verify at the link.
 
-### R5 — Third-party history sites
+### R5 — Third-party history and review sites
 
-**Mitigation.** Tight per-site allowlist; `kind: "history"` adapters are rejected if their allow regexes
-could reach an account path; lookups send only public data; history never overrides the quality floor.
+**Mitigation.** Tight per-site allowlist; `kind: "history"` and `kind: "review"` adapters go through the
+same checks — each is rejected if its `allow` regexes could reach an account path (tested behaviourally
+against a fixed adversarial suite) and if its `covers` names a shop adapter that is not loaded. Lookups
+send only public data; history never overrides the quality floor.
 **Residual.** These are third-party sites of unknown provenance, and the plugin widens its host allowlist
-for each one added. Do not add a history site that requires login or asks for account data.
+for each one added. Do not add a site that requires login or asks for account data. The `review` kind
+exists, but **no review adapter ships**: the survey found no source that was at once robots-permitted,
+addressable from a product URL or title, and readable as text without a click
+(`.beads/DS-3/evidence-05.txt`). If one is added later it inherits these guarantees unchanged — adding a
+host stays a data change, enforced by the guard rather than by new code.
 
 ### R6 — Forecast overconfidence
 
@@ -159,6 +183,23 @@ refused by the **guard** and pinned by the selftest matrix, which is a different
 observed framework grant. One run on one build either way; re-check after a browser swap or a Claude Code
 upgrade. The guard's default-deny remains the second layer.
 
+### R12 — The authenticity label is a rule over facts the listing controls
+
+**Mitigation.** The label is one of four values, computed deterministically, and reported as **evidence**
+rather than a verdict: `brand_confidence`, the signals behind it in plain words, the facts actually read,
+and a fixed caveat on every block saying that absence of a signal is not proof of authenticity. Three
+signals discredit and cap the label at `low`; five are informational and never move it, so "no brand
+storefront on Flipkart" cannot read as evidence of fraud. The word "genuine" appears nowhere in the
+output, and both the skill and the README say why.
+**Residual.** **A convincing counterfeit satisfies every signal.** Brand in the title, a brand store, a
+first-party seller, a clean review sample — every one is text the seller controls and the plugin can only
+read. The label therefore measures how well *justified* the brand claim is, not whether the product is
+real. A `high` printed beside a fake is this check's expected failure mode, and it is why the caveat
+travels with every block instead of living in the docs. H6 — whether an amazon.in product page exposes the
+brand attribute, a brand-storefront link, a "Sold by" seller and an inline review list at all without a
+click — **could not be live-checked in this story** (`.beads/DS-3/evidence-05.txt`), so the extraction's
+central assumption is untested. Verify at the link.
+
 ## Manual end-to-end checklist
 
 Referenced by the plan's §5.3: live Chrome behaviour and real-DOM extraction quality are **not covered by
@@ -178,7 +219,11 @@ touches their browser.
    retrying.
 7. **Confirm the guard does not affect ordinary Chrome use** — browse something unrelated in the same
    window and check nothing is blocked.
-8. **Check extraction quality** on a real product page: are prices, ratings and review counts right?
+8. **Check extraction quality** on a real product page: are prices, ratings and review counts right? For
+   the trust half, check the brand, the "Sold by" seller and the review sample were read only where the
+   page actually showed them, and that a field the page did not show was **left out rather than
+   guessed** — `reviews_read` must never equal the listing's own `review_count`. This is also where H6
+   and H7 get settled: whether those fields are on the page at all without a click.
 9. **Confirm the read-only denial** by asking the agent to add something to the cart — it must refuse.
 
 ## Reporting a problem

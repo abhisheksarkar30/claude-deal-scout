@@ -11,14 +11,14 @@ compile phase, and no dependencies to install. "Build" here means *run the tests
 |---|---|---|
 | Install dependencies | *none — do not run `npm install`* | [CLAUDE.md](../../CLAUDE.md), [package.json](../../package.json) (no `dependencies`) |
 | Build | *none* | — |
-| Test (all) | `npm test` (= `node --test`, 123 tests across 7 files) | [package.json:9](../../package.json#L9) |
+| Test (all) | `npm test` (= `node --test`, 176 tests across 8 files) | [package.json:9](../../package.json#L9) |
 | Test (single file) | `node --test test/history.test.js` | `node:test` CLI |
 | Test (single case) | `node --test --test-name-pattern="point-count gate" test/history.test.js` | `node:test` CLI |
 | Guard policy matrix | `node scripts/guard.js selftest` → must print `selftest OK: 60 cases` and exit 0 | [guard.js:293-329](../../scripts/guard.js#L293-L329) |
 | Lint / format / type-check | *none configured* | see [conventions.md](conventions.md#formatting--lint) |
 | Run the feature | install the plugin (below), then `/claude-deal-scout:find-best-deal` | [skills/find-best-deal/SKILL.md](../../skills/find-best-deal/SKILL.md) |
 | Deploy | *none — the "deploy" is installing the plugin into Claude Code* | — |
-| Generate a report offline | see "Report CLI" below | [report.js:70-90](../../scripts/report.js#L70-L90) |
+| Generate a report offline | see "Report CLI" below | [report.js:77-97](../../scripts/report.js#L77-L97) |
 
 ### Install / reload the plugin
 
@@ -49,7 +49,8 @@ node scripts/report.js --requirement '{"budget":50000,"eligible_conditions":["hd
 - `--requirement <json>` is optional **but silently load-bearing**: without it the budget gate,
   the `over_budget` flag, conditional offers and both deadline-dependent verdict branches never
   fire. Omit the flag only when the user supplied none of budget/eligible_conditions/deadline.
-- stdout: the merged report JSON. Exit 0 on success, 2 on any error.
+- stdout: the merged report JSON — candidates ranked by `score.js`, each carrying `price_history`
+  (`history.js`) and `trust_assessment` (`trust.js`). Exit 0 on success, 2 on any error.
 
 ### Guard CLI
 

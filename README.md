@@ -113,10 +113,10 @@ Price-history sites are a second kind, and need `"kind": "history"` plus:
 
 ### Two rules `loadSites` enforces, so you find out at load rather than at runtime
 
-1. **A history adapter may not reach account or mutation paths.** Every `allow` regex is tested against a
-   fixed adversarial path suite; if any of them matches, say, `/buy/confirm` or `/payment/result`, the
-   adapter is rejected. This is checked by *running* your regex, not by reading it, so an innocent pattern
-   is not rejected for merely containing a word like `address`.
+1. **A non-shop adapter (`history`, `review`) may not reach account or mutation paths.** Every `allow`
+   regex is tested against a fixed adversarial path suite; if any of them matches, say, `/buy/confirm` or
+   `/payment/result`, the adapter is rejected. This is checked by *running* your regex, not by reading it,
+   so an innocent pattern is not rejected for merely containing a word like `address`.
 2. **`covers` must name loaded shop adapters.** A typo is a load error, not a silently dead lookup.
 
 A bad adapter makes the guard **fail closed**: the run stops rather than proceeding with a policy that
@@ -129,11 +129,37 @@ Add one only after confirming, by hand, that its pages expose **all four** of `c
 `highest` and `average` as readable text. The agent cannot click, so a site that renders its chart and
 hides the numbers is useless here no matter how good its data is. A partial result counts as no data.
 
+### Is it genuine?
+
+Every candidate gets a **brand-authenticity assessment**, reported as *evidence* — never as a verdict
+that the product is real. The label is one of four confidences, computed from facts the listing itself
+prints: `high` (a brand storefront **and** a first-party seller, with nothing discrediting), `medium`
+(exactly one of those two), `low` (evidence was read but nothing corroborates it, or something
+discrediting fired), or `none` (nothing justifying was found on the page).
+
+The signals split deliberately. Three **discredit**, and cap the label at `low`: the brand is missing
+from the listing's own title, the seller is a third party, or another marketplace lists the same product
+far dearer. Five are only **informational** and never move the label — a rating that disagrees with a
+peer or an off-site source, a review sample that is largely unverified or too small to say anything, no
+brand storefront (normal on Flipkart, which has no storefront concept), and no matching listing on the
+other marketplace.
+
+**What it cannot see.** Every fact behind it is written by the listing, and a counterfeiter controls
+those facts — so a listing can satisfy every signal and still be fake, and a missing signal is not proof
+of anything. That is why the report says *evidence*, why the caveat travels with every assessment, and
+why the wording never becomes "genuine" or "authentic". Verify at the link.
+
+The cross-marketplace half needs no new site: the same `product_key` on the other marketplace is a
+corroborating peer, and a peer that is far dearer is exactly what makes a suspiciously cheap listing
+visible. A third-party review source would slot in as a `kind: "review"` adapter (see above); none ships
+today, so that half is simply empty and the assessment degrades to what the page and the other
+marketplace show.
+
 ## Model and browser independence
 
 **No model dependency.** Nothing here requires a Claude model. There is no `model:` key in any
 frontmatter, and nothing in `scripts/`, `sites/` or `data/` names one. The deterministic core —
-`score.js`, `history.js`, `report.js` — is plain Node with zero dependencies, so the plugin runs
+`score.js`, `history.js`, `trust.js`, `report.js` — is plain Node with zero dependencies, so the plugin runs
 unchanged under whichever model your session is using.
 
 **The browser is configuration.** Which browser tools the research subagent may call, which must carry a
@@ -239,7 +265,7 @@ controls are **unverified** on this build, and that document says which.
 ## Design
 
 The full design plan is in `docs/planning/`. The short version: the model extracts, deterministic scripts
-judge (`scripts/score.js`, `scripts/history.js`), and a hook (`scripts/guard.js`, wired in
+judge (`scripts/score.js`, `scripts/history.js`, `scripts/trust.js`), and a hook (`scripts/guard.js`, wired in
 `hooks/hooks.json`) enforces two allowlists on the research subagent — a per-site path allowlist
 (`sites/*.json`) and a per-browser tool allowlist (`browsers/*.json`).
 

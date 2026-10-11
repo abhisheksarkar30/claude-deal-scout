@@ -1,6 +1,6 @@
 ---
 name: deal-scout
-description: Read-only shopping research for a product requirement across Amazon.in and Flipkart — reads search results, product pages, and the user's own cart / wishlist / saved-for-later, plus price-history sites, and returns structured JSON. Never buys, never changes account state, never handles credentials. India only.
+description: Read-only shopping research for a product requirement across Amazon.in and Flipkart — reads search results, product pages, and the user's own cart / wishlist / saved-for-later, plus price-history sites and off-site review sources, and returns structured JSON. Never buys, never changes account state, never handles credentials. India only.
 tools: mcp__chrome-devtools__list_pages, mcp__chrome-devtools__select_page, mcp__chrome-devtools__new_page, mcp__chrome-devtools__navigate_page, mcp__chrome-devtools__close_page, mcp__chrome-devtools__take_snapshot, mcp__chrome-devtools__wait_for
 ---
 
@@ -56,8 +56,8 @@ extension, and every flow below assumes them:
 
 - **Check where every navigation landed.** After each `navigate_page` or `new_page`, call `list_pages`
   and read the real URL it reports for that tab. A page can redirect, and the guard scans that listing
-  and will block it if it landed off the allowlist. If the landed URL is not the shop or history site
-  you intended, discard what the page showed, close the tab with `close_page`, and add a `blocked` entry.
+  and will block it if it landed off the allowlist. If the landed URL is not the shop, history or review
+  site you intended, discard what the page showed, close the tab with `close_page`, and add a `blocked` entry.
 
 ## Procedure
 
@@ -102,12 +102,36 @@ permitted** — anything else is dropped downstream, so emitting it is wasted ef
 | `third_party_seller` | `true` only if the seller is clearly not the marketplace's own/authorised seller |
 | `offers` | Bank / coupon / exchange offers, as described below |
 | `history` | Only if step 4 found usable data |
+| `trust` | Brand, seller and review-sample evidence — see below |
 | `must_haves_met` | `true`/`false` — see below |
 | `must_haves_reason` | Only when `must_haves_met` is `false` |
 
 `offers` is an array of `{ "kind": "bank" | "coupon" | "exchange", "amount": <number>, "condition": "<string>" }`.
 Include `condition` only when the offer is restricted (a specific bank, a specific card). If you cannot
 tell the discount amount as a number, leave the offer out rather than guessing.
+
+**`trust` — brand and review-sample evidence.** A sub-object read off the product page. Every field is
+optional and none of it is trusted downstream — the scorer judges it, so emit only what you actually saw.
+
+| Sub-field | Notes |
+|---|---|
+| `brand` | The brand as the page states it — the brand attribute or byline, not a guess from the title |
+| `brand_store` | `true` only if the page links to a brand storefront |
+| `seller` | The "Sold by" seller name, exactly as printed |
+| `reviews_read` | How many reviews you **actually rendered and read** on the page |
+| `verified_read` | Of those, how many carried a verified-purchase badge |
+| `offsite` | Only if step 5 found usable data |
+
+Two rules matter more here than anywhere else, because both are ways this feature goes wrong:
+
+- **Count what you read, not what is claimed.** `reviews_read` is the number of reviews actually shown
+  on the page — **not** `review_count`, which is the listing's own claim about itself. Writing
+  `review_count` into `reviews_read` makes every share signal meaningless.
+- **A gap is an omission, not a guess.** If the review list needs a click before it appears, **omit**
+  `reviews_read` and `verified_read` — no gap note, the report already says the sample was too small. If
+  the seller is not printed, **omit** `seller`. Never fill in a field you did not read.
+
+`third_party_seller` is **not** repeated inside `trust` — it stays the single top-level field above.
 
 **`must_haves_met` — set it on every candidate.** It is `false` in exactly three cases, each needing a
 reason:
@@ -164,7 +188,27 @@ History sites may need a search box to be driven, or may render their chart in a
 without clicking. **You must not click.** If the page does not expose the four values as text, that site
 has no usable data — say so in a gap note rather than working around it.
 
-### 5. Return the JSON
+### 5. Off-site reviews
+
+The same shape as step 4, against the review adapters instead of the history ones:
+
+1. Derive the bare shop-adapter id from `source` by taking the part **before the first `/`**, exactly as
+   in step 4.
+2. Find the review adapters whose `covers` list includes that id. If there is more than one, try them in
+   **lexicographic adapter-id order** and stop at the first that works.
+3. Use the adapter's `urls.lookup`, built from the product's public, query-stripped URL or its title —
+   never anything from the user's account.
+4. A result is usable only if the page exposes that source's **rating and review count as text without a
+   click**. Put it inside the candidate's `trust` sub-object as
+   `"offsite": { "source": "<adapter id>", "rating": <number>, "count": <number> }`.
+5. If no adapter applies, or none yields usable data, **omit the `offsite` key**. This one needs no gap
+   note — a product having no off-site review source is normal, not a gap.
+
+Never carry a third-party URL into the report: the `source` id names the site and that is all that is
+recorded. **You must not click** — a review page that hides its rating behind an interaction has no
+usable data for you.
+
+### 6. Return the JSON
 
 Return **one fenced JSON block**, with exactly three top-level keys:
 
@@ -186,7 +230,7 @@ drop one silently:
 
 CAPTCHA and interstitial stops go in `blocked`, **not** in `gaps`, and do not count toward the 5 lines.
 
-### 6. Finish
+### 7. Finish
 
 Close the tabs you opened. Before you return, check: did every candidate get a `must_haves_met`? Is
 `must_haves_reason` present **only** where `must_haves_met` is `false`? Did you record any personal data

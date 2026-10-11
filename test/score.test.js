@@ -15,6 +15,7 @@ const {
   W_RATING,
   PRIOR_MEAN,
   PRIOR_N,
+  MAX_STRING_LENGTH,
   REDACTED,
 } = require('../scripts/score');
 
@@ -326,6 +327,79 @@ test('candidates sharing a product_key are grouped', () => {
     candidate({ source: 'amazon-in', url: AMAZON_URL, product_key: 'solo' }),
   ]);
   assert.deepEqual(rep.product_groups, [{ product_key: 'iphone15-128', candidates: [0, 1] }]);
+});
+
+// ---------------------------------------------------------------------------
+// trust input (§3.3)
+// ---------------------------------------------------------------------------
+
+test('a trust sub-object passes validation intact', () => {
+  const trust = {
+    brand: 'Samsung',
+    brand_store: true,
+    seller: 'Appario Retail Private Ltd',
+    reviews_read: 6,
+    verified_read: 5,
+    offsite: { source: 'example-reviews', rating: 4.1, count: 2211 },
+  };
+  const rep = report([candidate({ trust })]);
+  assert.deepEqual(found(rep, 'amazon-in').trust, trust);
+});
+
+test('an over-long trust.brand is capped at MAX_STRING_LENGTH', () => {
+  const rep = report([candidate({ trust: { brand: 'x'.repeat(400) } })]);
+  assert.equal(found(rep, 'amazon-in').trust.brand.length, MAX_STRING_LENGTH);
+});
+
+test('a PII-shaped trust.seller is redacted', () => {
+  const rep = report([candidate({ trust: { seller: 'call 9876543210' } })]);
+  assert.equal(found(rep, 'amazon-in').trust.seller, `call ${REDACTED}`);
+});
+
+test('trust.offsite.source is redacted when PII-shaped and capped when over-long', () => {
+  const rep = report([candidate({ trust: { offsite: { source: '9876543210', rating: 4, count: 10 } } })]);
+  assert.equal(found(rep, 'amazon-in').trust.offsite.source, REDACTED);
+
+  const long = report([candidate({ trust: { offsite: { source: 'y'.repeat(400), rating: 4, count: 10 } } })]);
+  assert.equal(found(long, 'amazon-in').trust.offsite.source.length, MAX_STRING_LENGTH);
+});
+
+test('a verified_read greater than reviews_read drops the pair but keeps the candidate', () => {
+  const rep = report([candidate({ trust: { brand: 'Samsung', reviews_read: 3, verified_read: 5 } })]);
+  const result = found(rep, 'amazon-in');
+
+  assert.equal(result.trust.brand, 'Samsung');
+  assert.ok(!('reviews_read' in result.trust));
+  assert.ok(!('verified_read' in result.trust));
+  assert.ok(result.dropped_fields.includes('reviews_read'));
+  assert.ok(result.dropped_fields.includes('verified_read'));
+});
+
+test('a non-numeric reviews_read drops only that field, without dropping the lone verified_read', () => {
+  const rep = report([candidate({ trust: { brand: 'Samsung', reviews_read: '6', verified_read: 5 } })]);
+  const trust = found(rep, 'amazon-in').trust;
+
+  assert.equal(trust.brand, 'Samsung');
+  assert.equal(trust.verified_read, 5);
+  assert.ok(!('reviews_read' in trust));
+});
+
+test('an unknown key inside trust is dropped and named in dropped_fields', () => {
+  const rep = report([candidate({ trust: { brand: 'Samsung', verdict: 'genuine' } })]);
+  const result = found(rep, 'amazon-in');
+
+  assert.deepEqual(result.trust, { brand: 'Samsung' });
+  assert.ok(result.dropped_fields.includes('verdict'));
+});
+
+test('a trust value that is not an object drops the whole field', () => {
+  const rep = report([candidate({ trust: 'genuine' })]);
+  const result = found(rep, 'amazon-in');
+
+  assert.ok(!('trust' in result));
+  assert.ok(result.dropped_fields.includes('trust'));
+  // ...and the candidate itself survives, exactly as a bad `history` does.
+  assert.equal(result.price, 20000);
 });
 
 // ---------------------------------------------------------------------------
