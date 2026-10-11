@@ -55,13 +55,13 @@ session), record: whether it has an **addressable lookup** built from a product 
 permits. Then either author **one** `sites/<review-site>.json` or record **"none qualified"** with the
 reason. **A robots-disallowed or click-gated source is a "no", not a workaround**
 ([`docs/context/site-adapters.md:130`](../../docs/context/site-adapters.md#L130),
-[:136-141](../../docs/context/site-adapters.md#L136-L141)). Live-browser work needs the user's go-ahead;
-if the pane is unavailable, defer with the procedure written down — the br-DS-1-04 precedent and the
-same call the user made for H3
-([`.beads/DS-1/evidence-04.txt`](../DS-1/evidence-04.txt)). A shipped `review` adapter must match the
-`history`-adjacent schema `validateSites` enforces: real `hosts`, `label`, `notes`, a tight `allow`
-(product/lookup paths only), a `urls.lookup` built from the product's public query-stripped URL or title
-(**never** account data, R5), and a non-empty `covers` naming loaded shop ids.
+[:136-141](../../docs/context/site-adapters.md#L136-L141)). **The live read runs in this story** — the
+user gave the go-ahead at the Phase-2 checkpoint (§7). Only if the browser pane is unavailable does the
+br-DS-1-04 fallback apply: HTTP-level checks with `robots.txt`, the limitation recorded rather than
+papered over ([`.beads/DS-1/evidence-04.txt`](../DS-1/evidence-04.txt)). A shipped `review` adapter must
+match the `history`-adjacent schema `validateSites` enforces: real `hosts`, `label`, `notes`, a tight
+`allow` (product/lookup paths only), a `urls.lookup` built from the product's public query-stripped URL
+or title (**never** account data, R5), and a non-empty `covers` naming loaded shop ids.
 
 **§2 H8 — the three outcomes, stated as acceptable (§8).** H8 asks whether *some* third-party review
 source passes all three of: an addressable lookup built from a product URL or title, a rating/count
@@ -69,8 +69,11 @@ readable as text without a click, and a `robots.txt` that permits it. This bead 
 with:
 
 - **ship one adapter** (a source qualified — author `sites/<review-site>.json`), **or**
-- **ship none and record why** (no source qualified), **or**
-- **defer with the procedure written down** (live work not run this sitting).
+- **ship none and record why** (no source qualified) — the expected, acceptable result if the survey
+  finds nothing and the `offsite` seam simply never fires, **or**
+- **record the procedure only** (live work could not be run and the HTTP-level fallback could not
+  settle it either) — the one outcome that leaves H8 open rather than answered, and the only one that
+  should be avoided when the browser pane is available.
 
 **All three are acceptable outcomes, not failures.** Shipping no `sites/<review-site>.json` is a valid
 result — the `offsite` seam the engine builds (bead 02) is still correct and simply never fires, exactly

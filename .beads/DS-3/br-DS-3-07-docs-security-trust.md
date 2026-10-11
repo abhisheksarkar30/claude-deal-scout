@@ -4,8 +4,9 @@
 residual this bead writes down), §10 (the security-engineer note), §3.3 (the single cap+sanitizer
 applied on both render paths), §3.6 (the widened surface), §4.1/§4.2, §8 (this bead). Repo
 `D:\github\claude-deal-scout`. Cited by section for the plan. §11's context-refresh list is **not** this
-bead's scope — but note §11 also lists `docs/SECURITY.md`, which is **not** dual ownership: the
-context-refresh phase writes only under `docs/context/`, so the SECURITY.md edits are this bead's.
+bead's scope: it names `docs/context/security-and-permissions.md` (the agent-facing summary of the
+threat model), **not** this file — the refresh phase writes only under `docs/context/`, so the
+`docs/SECURITY.md` edits below are this bead's alone.
 
 - **Bead ID**: br-DS-3-07
 - **Priority**: P1 (high — the story's residual must be written down rather than left implied)
