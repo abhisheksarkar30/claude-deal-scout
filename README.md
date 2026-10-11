@@ -113,10 +113,10 @@ Price-history sites are a second kind, and need `"kind": "history"` plus:
 
 ### Two rules `loadSites` enforces, so you find out at load rather than at runtime
 
-1. **A history adapter may not reach account or mutation paths.** Every `allow` regex is tested against a
-   fixed adversarial path suite; if any of them matches, say, `/buy/confirm` or `/payment/result`, the
-   adapter is rejected. This is checked by *running* your regex, not by reading it, so an innocent pattern
-   is not rejected for merely containing a word like `address`.
+1. **A non-shop adapter (`history`, `review`) may not reach account or mutation paths.** Every `allow`
+   regex is tested against a fixed adversarial path suite; if any of them matches, say, `/buy/confirm` or
+   `/payment/result`, the adapter is rejected. This is checked by *running* your regex, not by reading it,
+   so an innocent pattern is not rejected for merely containing a word like `address`.
 2. **`covers` must name loaded shop adapters.** A typo is a load error, not a silently dead lookup.
 
 A bad adapter makes the guard **fail closed**: the run stops rather than proceeding with a policy that
@@ -159,7 +159,7 @@ marketplace show.
 
 **No model dependency.** Nothing here requires a Claude model. There is no `model:` key in any
 frontmatter, and nothing in `scripts/`, `sites/` or `data/` names one. The deterministic core —
-`score.js`, `history.js`, `report.js` — is plain Node with zero dependencies, so the plugin runs
+`score.js`, `history.js`, `trust.js`, `report.js` — is plain Node with zero dependencies, so the plugin runs
 unchanged under whichever model your session is using.
 
 **The browser is configuration.** Which browser tools the research subagent may call, which must carry a
@@ -265,7 +265,7 @@ controls are **unverified** on this build, and that document says which.
 ## Design
 
 The full design plan is in `docs/planning/`. The short version: the model extracts, deterministic scripts
-judge (`scripts/score.js`, `scripts/history.js`), and a hook (`scripts/guard.js`, wired in
+judge (`scripts/score.js`, `scripts/history.js`, `scripts/trust.js`), and a hook (`scripts/guard.js`, wired in
 `hooks/hooks.json`) enforces two allowlists on the research subagent — a per-site path allowlist
 (`sites/*.json`) and a per-browser tool allowlist (`browsers/*.json`).
 

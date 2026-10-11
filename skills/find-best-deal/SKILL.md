@@ -82,9 +82,9 @@ the user did not supply left out; if the user supplied none of them, omit the fl
 carries only `candidates`, `gaps` and `blocked`, so the requirement is not in it**; without this flag the
 budget gate, the `over_budget` flag and both deadline-dependent verdict branches never fire.
 
-That one command validates and ranks the candidates (`score.js`), runs the price-history verdict over the
-same raw candidate array (`history.js`), and prints the merged report. Both receive the agent's direct
-output; neither feeds the other.
+That one command validates and ranks the candidates (`score.js`), runs the price-history verdict
+(`history.js`) and the trust assessment (`trust.js`) over the same raw candidate array, and prints the
+merged report. All three receive the agent's direct output; none feeds another.
 
 If it exits non-zero or prints nothing, the agent's JSON was malformed or a value failed validation —
 show the user the error rather than presenting a partial report as if it were complete.

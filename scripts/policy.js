@@ -23,16 +23,17 @@ const path = require('node:path');
 
 /**
  * Path vocabulary marking an account- or mutation-bearing URL. `deny` entries in an adapter are
- * drawn from this list; the same list drives the adversarial suite `loadSites` tests history
- * adapters against.
+ * drawn from this list; the same list drives the adversarial suite `loadSites` tests non-shop
+ * adapters (`history`, `review`) against.
  */
 const DENY_VOCABULARY = ['add', 'buy', 'checkout', 'signin', '/ap/', '/gp/css/', 'payment', 'address', 'order'];
 
 /**
  * One genuinely mutating path per `DENY_VOCABULARY` entry (the plan's `/add`, `/ap/signin` and
- * `/gp/css/order` are a subset of this). A `history` adapter whose `allow` regexes match any of
- * these is rejected at load — tested behaviourally against these paths, never by inspecting the
- * regex source, so an innocent pattern is not rejected for merely containing a vocabulary word.
+ * `/gp/css/order` are a subset of this). A non-shop adapter (`history`, `review`) whose `allow`
+ * regexes match any of these is rejected at load — tested behaviourally against these paths, never
+ * by inspecting the regex source, so an innocent pattern is not rejected for merely containing a
+ * vocabulary word.
  */
 const ADVERSARIAL_PATHS = [
   '/add',

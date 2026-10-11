@@ -110,7 +110,7 @@ function validOffsite(raw) {
 
 /**
  * Validate one raw `trust` input — the engine-side sibling of `score.js`'s `validTrust`, exactly as
- * this file's `analyze` sibling relationship to `history.js`'s `validate` works.
+ * `history.js`'s non-exported `validate` is the engine-side sibling of `score.js`'s `validHistory`.
  *
  * Returns the narrowed sub-object, or `null` when `raw` is not an object. That `null` is the "not
  * attempted" side of §3.1's null-vs-`"none"` split: an object carrying no usable fact still returns
@@ -375,7 +375,7 @@ function analyze(rawCandidate, { peers = [], grouped = false } = {}) {
 
   const surfaced = firstBySourceThenIndex(peers);
   const peer = surfaced && {
-    source: clean(surfaced.candidate.source),
+    source: clean(sourceToBareId(surfaced.candidate.source)),
     price_gap_pct: displayPct(priceRatio(price, usablePrice(surfaced.candidate.price))),
     rating_gap: displayGap(ratingGap(rating, usableRating(surfaced.candidate.rating))),
   };

@@ -6,11 +6,11 @@
  *
  * Reads the research agent's JSON on stdin, takes the skill's requirement (budget / eligible
  * conditions / deadline) as `--requirement <json>`, validates and scores the candidates with
- * `score.js`, runs `history.js` over the same raw candidate array, and prints one merged report on
- * stdout.
+ * `score.js`, runs `history.js` and `trust.js` over the same raw candidate array, and prints one
+ * merged report on stdout.
  *
  * It exists so the skill invokes one command instead of pasting Node into a prompt, and so the whole
- * pipeline — validate, rank, history, merge — is testable end to end without a browser.
+ * pipeline — validate, rank, history, trust, merge — is testable end to end without a browser.
  */
 
 const fs = require('node:fs');
@@ -24,9 +24,9 @@ const { analyzeAll: analyzeTrust } = require('./trust');
 const ROOT = path.join(__dirname, '..');
 
 /**
- * Both `score.js` and `history.js` receive the agent's raw candidates directly — neither feeds the
- * other (§3.7 step 4). They are joined here, on `candidate.index`, because validation may drop
- * candidates and so the two output arrays are not positionally aligned.
+ * All three engines (`score.js`, `history.js`, `trust.js`) receive the agent's raw candidates
+ * directly — none feeds another (§3.7 step 4). They are joined here, on `candidate.index`, because
+ * validation may drop candidates and so the three output arrays are not positionally aligned.
  *
  * `input.requirement` is NOT part of the agent's JSON (the agent emits exactly `candidates`, `gaps`
  * and `blocked` — §3.4 step 5). The skill, which collected it at intake (§3.7 step 1), supplies it

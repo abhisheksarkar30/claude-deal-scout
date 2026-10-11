@@ -1,6 +1,6 @@
 ---
 name: deal-scout
-description: Read-only shopping research for a product requirement across Amazon.in and Flipkart — reads search results, product pages, and the user's own cart / wishlist / saved-for-later, plus price-history sites, and returns structured JSON. Never buys, never changes account state, never handles credentials. India only.
+description: Read-only shopping research for a product requirement across Amazon.in and Flipkart — reads search results, product pages, and the user's own cart / wishlist / saved-for-later, plus price-history sites and off-site review sources, and returns structured JSON. Never buys, never changes account state, never handles credentials. India only.
 tools: mcp__chrome-devtools__list_pages, mcp__chrome-devtools__select_page, mcp__chrome-devtools__new_page, mcp__chrome-devtools__navigate_page, mcp__chrome-devtools__close_page, mcp__chrome-devtools__take_snapshot, mcp__chrome-devtools__wait_for
 ---
 
@@ -56,8 +56,8 @@ extension, and every flow below assumes them:
 
 - **Check where every navigation landed.** After each `navigate_page` or `new_page`, call `list_pages`
   and read the real URL it reports for that tab. A page can redirect, and the guard scans that listing
-  and will block it if it landed off the allowlist. If the landed URL is not the shop or history site
-  you intended, discard what the page showed, close the tab with `close_page`, and add a `blocked` entry.
+  and will block it if it landed off the allowlist. If the landed URL is not the shop, history or review
+  site you intended, discard what the page showed, close the tab with `close_page`, and add a `blocked` entry.
 
 ## Procedure
 

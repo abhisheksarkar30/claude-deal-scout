@@ -256,6 +256,13 @@ test('the emitted peer.source is sanitized and capped', () => {
   assert.equal(long.peer.source.length, MAX_STRING_LENGTH);
 });
 
+test('the emitted peer.source is the bare adapter id, not the narrowed source', () => {
+  // A peer on an account list (`flipkart/wishlist`) surfaces as `flipkart`, per §3.1/§3.2 — the same
+  // bare id `sourceToBareId` matches the peer by, capped+sanitized like `facts`.
+  const block = primary(candidate({ source: 'flipkart/wishlist', price: 66000 }));
+  assert.equal(block.peer.source, 'flipkart');
+});
+
 // ---------------------------------------------------------------------------
 // Off-site evidence
 // ---------------------------------------------------------------------------
