@@ -8,7 +8,7 @@ source by line, stable at the `feat/ds-3-…` base. §11's context-refresh list 
 
 - **Bead ID**: br-DS-3-02
 - **Priority**: P0 (critical — the whole story's judgement lives here)
-- **Status**: pending
+- **Status**: done
 - **Original Estimate**: 2.5–3h (the largest bead in the story — the engine *and* a ~31-case fixture
   suite; see the note under Outcome Definition)
 - **Dependencies**: br-DS-3-01
@@ -258,6 +258,58 @@ miss looks like `no_peer_site`, which is why that signal is informational only.
 
 ## Review Notes
 
-*(Append-only. The implementer records here, when the bead is done: what was built, any justified
-deviation from the bead or the plan, the observed failing test names from controls 11/13/14, and
-anything deliberately left undone. Not written at beadify time.)*
+**Done.** `scripts/trust.js` created — the eight signal names in the fixed `SIGNALS` order, the three
+discrediting vs five informational split, the four-rung ladder, `validate`/`analyze`/`analyzeAll`,
+`peerSets` + `firstBySourceThenIndex` for cross-site corroboration, and the `offsite` block. Exports
+the knobs and the two entry points; `MAX_REVIEWS_READ` is deliberately not referenced.
+
+- `test/trust.test.js` created — **37 cases** (the bead estimated ~31).
+- Verified: `npm test` **168 pass / 0 fail** (131 after bead 01 + 37); `node scripts/guard.js selftest`
+  still **`selftest OK: 60 cases`**; `BRAND_CONFIDENCES` prints `high,medium,low,none`.
+
+**Controls 11, 13, 14 — all run once, reverted, `sha1sum scripts/trust.js` = `e93b5ec3…` before and
+after (unchanged).** Failing test names observed:
+
+- **11** (`MIN_REVIEWS_READ` → `0`): `review_sample_too_small fires below MIN_REVIEWS_READ`,
+  `a sample below MIN_REVIEWS_READ yields no share signal either way`, **and**
+  `the exported knobs carry their plan-pinned defaults` — **three**, not the documented two; the
+  third is the knob assertion, which is expected and not a defect.
+- **13** (`i !== index && sourceToBareId(...) !== own` → `i !== index`): exactly two —
+  `price_undercut fires at exactly UNDERCUT_PCT and not one point below`,
+  `the same product on the same site is not a peer`.
+- **14** (rung 2's `&& !discrediting` removed): exactly one —
+  `a brand store plus a third-party seller yields low, not medium` → returned `medium`.
+
+**Two test fixtures had to be tightened to make the controls bite, and the first attempt at control 11
+is what exposed it.** The review-sample fixtures were written as `reviews_read: MIN_REVIEWS_READ - 1`,
+which moves *with* the knob, so mutating the knob changed nothing behavioural and only the knob
+assertion caught it. They are now literal (`3`, and the floor itself at `4`). Likewise the
+`price_undercut` boundary case originally used two cross-site candidates, which control 13 cannot
+disturb; it now carries a same-site decoy priced 100% higher, so dropping the bare-id guard makes the
+"does not fire" half fail. Both changes are in the tests only.
+
+**The suite caught a real bug in the first cut**, which is why it is worth recording: `confidenceFor`
+was handed the `supports` **array** where it compares a count, so `supports >= 2` was `NaN`-false and
+every well-supported candidate came out `low`. The ladder fixtures failed immediately.
+
+**Justified deviations, each where the bead was silent:**
+
+1. `priceRatio` returns `null` for a **zero base**, not `0` or `Infinity`. A zero-priced listing is
+   nonsense data, and the ratio's only consumer here is the **discrediting** `price_undercut` — a
+   fabricated accusation is the direction this story must not fail in.
+2. `unverified_review_share` requires **both** counts. With `verified_read` absent there is no share
+   to compare, so no signal is claimed rather than assuming zero verified; the bead's phrase "the
+   unverified share" presumes both are present.
+3. `no_peer_site` is claimed only when the candidate actually took part in the grouping (non-empty
+   `product_key` **and** `source`). The bead says a `source`-less candidate is "excluded from peer
+   grouping entirely", and "we looked and did not find it" cannot be said of one that never looked.
+4. `facts` carries all five keys with explicit `null` for what was absent, so the JSON shape is
+   stable across candidates.
+5. `peer.price_gap_pct` / `rating_gap` and `offsite.rating_gap` are rounded to one decimal on the way
+   out (`history.js`'s `round1`); the signals compute on the unrounded values, so the emitted number
+   never disagrees with the signal that fired.
+
+**Not done, deliberately.** Nothing asserts that `brand_confidence` correlates with authenticity
+(§5.3) — a rule over readable signals is satisfiable by a convincing counterfeit, and the `CAVEAT` on
+every block says so. §11's context-refresh list is not this bead's scope. `score.js`'s `product_groups`
+is not reused, by design (§3.2).
