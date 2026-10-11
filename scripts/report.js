@@ -19,6 +19,7 @@ const path = require('node:path');
 const { loadSites } = require('./policy');
 const { score } = require('./score');
 const { analyzeAll, loadSaleCalendar } = require('./history');
+const { analyzeAll: analyzeTrust } = require('./trust');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -37,12 +38,18 @@ function buildReport(input, adapters, saleCalendar) {
 
   const scored = score({ requirement, candidates }, adapters);
   const histories = analyzeAll(candidates, { deadline: requirement.deadline, saleCalendar });
+  // Unlike `history.js`'s, this takes no options: the peer grouping needs only `product_key` and the
+  // bare adapter id, never the loaded adapter set. It lands on `trust_assessment`, beside the
+  // validated `trust` *input* `score.js` already put on the candidate — the two are not the same key,
+  // so the computed block never overwrites the evidence it was computed from.
+  const trusts = analyzeTrust(candidates);
 
   return {
     ...scored,
     candidates: scored.candidates.map((candidate) => ({
       ...candidate,
       price_history: histories[candidate.index] || null,
+      trust_assessment: trusts[candidate.index] || null,
     })),
     gaps: Array.isArray(input && input.gaps) ? input.gaps : [],
     blocked: Array.isArray(input && input.blocked) ? input.blocked : [],

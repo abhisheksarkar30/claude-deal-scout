@@ -9,7 +9,7 @@ merges, ranking untouched), §2 R5, §5.1 (the ranking-risk row), §5.2 (`test/r
 - **Bead ID**: br-DS-3-03
 - **Priority**: P0 (critical — this is the wiring that makes the engine's output reach the user, and the
   test that pins the flag-only guarantee)
-- **Status**: pending
+- **Status**: done
 - **Original Estimate**: 1–1.5h
 - **Dependencies**: br-DS-3-02
 - **Blocks**: br-DS-3-06
@@ -91,6 +91,34 @@ comment (§5.1). It blocks the skill bead (06), which documents behaviour the us
 
 ## Review Notes
 
-*(Append-only. The implementer records here, when the bead is done: what was built, any justified
-deviation from the bead or the plan, and anything deliberately left undone. Not written at beadify
-time.)*
+**Done.** `scripts/report.js` merges the engine's output as one more sibling of the history join:
+`analyzeAll` imported as `analyzeTrust` (the alias is required — `history.js` already exports that
+name and `report.js` binds it), called with no options, landing on `trust_assessment` beside the
+validated `trust` input `score.js` already put on the candidate. `score()` and every other step are
+untouched.
+
+- `test/report.test.js` gains the two specified cases.
+- Verified: `npm test` **170 pass / 0 fail** (168 after bead 02 + 2); `node scripts/guard.js selftest`
+  still **`selftest OK: 60 cases`**.
+- Also verified end to end through the real CLI, not just `buildReport`: piping an agent-shaped JSON
+  payload with a `trust` input into `node scripts/report.js` prints **both** keys on the candidate —
+  the sanitized input under `trust` and the computed `brand_confidence: "high"` block under
+  `trust_assessment`, with `caveat` and the plain-word `reason` intact.
+
+**On the ranking test's shape.** §5.4 assigns this bead no control, and the invariant test is the pin
+instead. Its last two assertions are what stop it passing vacuously: they require
+`trust_assessment.brand_confidence === 'high'` in the with-input run **and** `null` in the without-input
+run, so a merge that silently dropped the trust half could not satisfy both. The comparison itself is
+on `best_product.index`/`score`, `best_deal.index`/`effective_price`, and per-candidate `score`,
+`flags` and `product_groups` — the ranking-relevant values, as the bead specifies. It is deliberately
+**not** a deep-equal on the candidate objects, which would be false: the winning objects do carry the
+extra validated `trust` key.
+
+**One fixture correction while writing it.** The roster initially omitted `third_party_seller`, which
+`test/report.test.js`'s `candidate()` helper does not set — so only one support was read and the sanity
+assertion saw `medium`, not `high`. The fixtures now set it explicitly. That is a test-only change and
+it did not touch the code under test; it did confirm the merge was working correctly all along.
+
+**Not done, deliberately.** Nothing here asserts the *content* of `trust_assessment` — that is
+`test/trust.test.js`'s (bead 02). This bead pins the merge and the ranking invariant only. §11's
+context-refresh list is not this bead's scope.

@@ -8,6 +8,7 @@ const { spawnSync } = require('node:child_process');
 
 const { buildReport } = require('../scripts/report');
 const { loadSites } = require('../scripts/policy');
+const { CAVEAT: TRUST_CAVEAT } = require('../scripts/trust');
 
 const REPORT = path.join(__dirname, '..', 'scripts', 'report.js');
 const ADAPTERS = loadSites(path.join(__dirname, '..', 'sites'));
@@ -98,6 +99,78 @@ test('history stays aligned when validation drops a candidate in between', () =>
   assert.equal(flipkart.index, 2);
   assert.equal(flipkart.price_history.verdict, 'buy_now');
   assert.equal(report.candidates.find((c) => c.source === 'amazon-in').price_history, null);
+});
+
+test('the merged report carries trust_assessment on every candidate', () => {
+  const trust = {
+    brand: 'TestPhone',
+    brand_store: true,
+    seller: 'Test Retail Private Ltd',
+    reviews_read: 5,
+    verified_read: 5,
+  };
+  const report = buildReport(
+    {
+      requirement: {},
+      candidates: [
+        candidate({ trust, third_party_seller: false }),
+        // A different product_key, so no peer and no peer-derived signal on the first candidate.
+        candidate({ source: 'flipkart', url: 'https://www.flipkart.com/x/p/itm1234abcd', price: 22000, product_key: 'otherphone' }),
+      ],
+    },
+    ADAPTERS,
+    CALENDAR,
+  );
+
+  const [assessed, plain] = report.candidates;
+  assert.equal(assessed.trust_assessment.brand_confidence, 'high');
+  assert.equal(assessed.trust_assessment.caveat, TRUST_CAVEAT);
+  // The validated input rides beside the computed block — neither key overwrites the other.
+  assert.deepEqual(assessed.trust, trust);
+  assert.equal(plain.trust_assessment, null);
+  assert.ok(!('trust' in plain));
+});
+
+test('trust input does not change the ranking', () => {
+  const roster = () => [
+    candidate({ price: 10000, rating: 4.9, review_count: 500, third_party_seller: false }),
+    candidate({
+      source: 'flipkart',
+      url: 'https://www.flipkart.com/x/p/itm1234abcd',
+      price: 12000,
+      rating: 4.1,
+      review_count: 500,
+      product_key: 'otherphone',
+      third_party_seller: false,
+    }),
+  ];
+  const trust = { brand: 'TestPhone', brand_store: true, seller: 'Test Retail Private Ltd', reviews_read: 5, verified_read: 5 };
+
+  const without = buildReport({ requirement: { budget: 20000 }, candidates: roster() }, ADAPTERS, CALENDAR);
+  const withTrust = buildReport(
+    { requirement: { budget: 20000 }, candidates: roster().map((c) => ({ ...c, trust })) },
+    ADAPTERS,
+    CALENDAR,
+  );
+
+  // The flag-only guarantee: every ranking-relevant value is the same with and without trust input.
+  assert.equal(withTrust.best_product.index, without.best_product.index);
+  assert.equal(withTrust.best_product.score, without.best_product.score);
+  assert.equal(withTrust.best_deal.index, without.best_deal.index);
+  assert.equal(withTrust.best_deal.effective_price, without.best_deal.effective_price);
+  assert.deepEqual(
+    withTrust.candidates.map((c) => c.score),
+    without.candidates.map((c) => c.score),
+  );
+  assert.deepEqual(
+    withTrust.candidates.map((c) => c.flags),
+    without.candidates.map((c) => c.flags),
+  );
+  assert.deepEqual(withTrust.product_groups, without.product_groups);
+
+  // ...and the trust input really did reach the merge, so the comparison above is not a no-op.
+  assert.equal(withTrust.candidates[0].trust_assessment.brand_confidence, 'high');
+  assert.equal(without.candidates[0].trust_assessment, null);
 });
 
 test('the report CLI reads the agent JSON on stdin and takes the requirement via --requirement', () => {
