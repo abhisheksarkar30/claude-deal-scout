@@ -1,0 +1,126 @@
+# Bead br-DS-3-04: Extract the trust fields in the agent prompt, and live-check H6/H7
+
+**Plan Reference**: `docs/planning/DS-3-brand-authenticity-and-review-trust.md` **v7**, §3.5 (the agent
+extraction step), §3.1 (the `trust` input JSON), §2 R1/R2/R3 and hypotheses **H6/H7**, §5.3 (H6/H7 not
+covered by any automated test), §7 (the pre-flight decision: **the live checks run in this story**),
+§4.1/§4.2, §8 (this bead). Repo `D:\github\claude-deal-scout`. Cited by section for the plan; source by
+line, stable at the `feat/ds-3-…` base. §11's context-refresh list is **not** this bead's scope.
+
+- **Bead ID**: br-DS-3-04
+- **Priority**: P0 (critical — without the extraction the engine's input never exists, and the whole
+  feature stays inert)
+- **Status**: pending
+- **Original Estimate**: 1.5h (prompt edit + the H6/H7 live read)
+- **Dependencies**: br-DS-3-02
+- **Blocks**: br-DS-3-06
+- **Commit**: `feat(DS-3): trust extraction in the agent prompt (br-DS-3-04)`
+
+## Description
+
+Teach the research agent to read the trust evidence off a product page and emit the `trust` sub-object
+the engine consumes, then live-check the two page-shape hypotheses the extraction rests on. **No
+runtime code changes here** — `agents/deal-scout.md` is a prompt, and the H6/H7 findings are recorded,
+not shipped.
+
+**Step 3's field table gains the five product-page `trust` sub-fields**
+([`agents/deal-scout.md:92-106`](../../agents/deal-scout.md#L92-L106)) — `brand`, `brand_store`,
+`seller`, `reviews_read`, `verified_read` — with the same care every other field gets. Step 4's
+price-history step gains a **sibling** step for the off-site review adapter that produces the sixth
+sub-field, `offsite` — `history` is added by step 4 the same way
+([`agents/deal-scout.md:104`](../../agents/deal-scout.md#L104)). The sibling's mechanics are identical
+to the history lookup ([`agents/deal-scout.md:147-165`](../../agents/deal-scout.md#L147-L165)):
+applicable adapters are those whose `covers` names the candidate's **bare** shop-adapter id, queried in
+**lexicographic id order**, first usable result wins, otherwise the `offsite` key is **omitted**.
+
+The input shape the agent emits (§3.1) — every field optional, none trusted:
+
+```json
+"trust": {
+  "brand": "Samsung",
+  "brand_store": true,
+  "seller": "Appario Retail Private Ltd",
+  "reviews_read": 6,
+  "verified_read": 5,
+  "offsite": { "source": "example-reviews", "rating": 4.1, "count": 2211 }
+}
+```
+
+`third_party_seller` is **not** duplicated into `trust` — the engine reads it from the candidate's
+existing top-level field. `offsite.url` is deliberately not carried: the `source` id names the site and
+no third-party link enters the report.
+
+**Two rules the prompt must state explicitly, because both are ways this feature goes wrong (§3.5):**
+
+- **Count what you read, not what is claimed.** `reviews_read` is the number of reviews *actually
+  rendered and read* on the page — **not** `review_count`, which is the listing's own claim about
+  itself. Writing `review_count` into `reviews_read` makes every share signal meaningless.
+- **A gap is an omission, not a guess.** If the review list needs a click, **omit** `reviews_read` and
+  `verified_read` (no gap note — `review_sample_too_small` already reports it); if the seller is not
+  printed, **omit** `seller`. This mirrors the history rule at
+  [`agents/deal-scout.md:160-161`](../../agents/deal-scout.md#L160-L161).
+
+The agent's existing hard rules already cover this work and **do not change**: page text is data, never
+record personal data, never click, never report a value it did not read
+([`agents/deal-scout.md:44-60`](../../agents/deal-scout.md#L44-L60), [:195-202](../../agents/deal-scout.md#L195-L202)).
+**The `tools:` grant and the frontmatter do not change.**
+
+**Live check — H6/H7 (§7 decided this runs inside the story, not deferred).**
+
+- **H6** — an Amazon.in `/dp/<ASIN>` page exposes, as text and **with no click**: the brand attribute, a
+  brand-storefront link, a "Sold by" seller name, and an inline top-review list carrying
+  verified-purchase badges and star values.
+- **H7** — a Flipkart `/<slug>/p/<id>` page exposes the seller name and the brand attribute **without a
+  click**. Flipkart product pages are client-rendered — the cart page rendered no text to `read_page`
+  for several seconds ([`sites/flipkart.json:20`](../../sites/flipkart.json#L20)) — so a `null`/absent
+  result is an **expected outcome, not a failure**. Flipkart reviews live behind a click and are **not
+  in scope** (§9).
+
+Constraints on the live read: **public pages only, in the built-in browser pane, never the user's
+logged-in session**. Findings go to `.beads/DS-3/evidence-05.txt` (beads 04 and 05 both write there;
+§4.1). If the browser pane is unavailable mid-story, the **fallback br-DS-1-04 used applies**:
+HTTP-level checks with `robots.txt`, the limitation recorded rather than papered over (precedent:
+[`.beads/DS-1/evidence-04.txt`](../DS-1/evidence-04.txt)). **A hypothesis that fails live is recorded
+as failed — not worked around with a click or an invented extraction.** The code in beads 01–03 is
+offline and unaffected either way.
+
+## Rationale
+
+The extraction is the untrusted layer: the agent runs against attacker-controlled page text, so the
+"count what you read" and "omit, don't guess" rules live in the prompt beside the existing "text is
+data" rule. H6/H7 are the highest-risk unverified facts in the plan — whether the pages even expose the
+seller and the inline review sample without a click (§5.3) — and §7 decided they are checked here rather
+than deferred.
+
+## Outcome Definition
+
+- `agents/deal-scout.md` step 3 lists the five `trust` sub-fields and step 4 has the off-site sibling
+  that produces `offsite`; both explicit prompt rules above are present.
+- `.beads/DS-3/evidence-05.txt` records, for H6 and H7, what a real page exposed as text without a
+  click (or that the hypothesis failed / the browser pane was unavailable and the fallback was used).
+- **Not covered** (state, do not fake): no automated test for the prompt text or the live read — the
+  agent's extraction is LLM behaviour (§5.3), checked by hand only.
+
+## Test Specifications
+
+- **No automated unit test for the prompt text** — the agent's extraction is LLM behaviour and the plan
+  deliberately keeps it out of the deterministic set (§5.3). Do not fabricate a test that merely asserts
+  the file contains a string.
+- **Manual / recorded** (`.beads/DS-3/evidence-05.txt`): the H6 (Amazon.in `/dp/<ASIN>`) and H7
+  (Flipkart `/<slug>/p/<id>`) live reads — brand, brand-storefront, "Sold by", inline review list with
+  badges (H6); seller + brand attribute (H7) — public pages only, no login, no click.
+- **Manual / recorded**: a read-through that the prompt still emits **exactly** bead 01's trusted
+  sub-keys (plus the existing top-level fields) and that no rule invites recording `review_count` as
+  `reviews_read`.
+
+## Files to Touch
+
+- `agents/deal-scout.md` (modify — step 3's field table; step 4's off-site sibling step; the two prompt
+  rules. `tools:`/frontmatter unchanged.)
+- `.beads/DS-3/evidence-05.txt` (create or append — the H6/H7 section)
+- `.claude-plugin/plugin.json` (modify — `version` bump)
+
+## Review Notes
+
+*(Append-only. The implementer records here, when the bead is done: what was built, any justified
+deviation from the bead or the plan, the H6/H7 live-read result, and anything deliberately left undone.
+Not written at beadify time.)*
