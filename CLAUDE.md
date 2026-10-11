@@ -93,7 +93,9 @@ in a repo or in this file.
   `test/*.test.js`. No test framework.
 - **Commits**: conventional commits; one commit per bead, message referencing `br-DS-1-<nn>`
   (e.g. `feat(DS-1): history stats and verdict engine (br-DS-1-05)`).
-- **Branch**: `feat/ds-1-deal-scout-plugin` off `main`.
+- **Branch**: one `feat/ds-<n>-<slug>` branch per story, cut from **`origin/main`** — not from
+  local `main`, which lags, and not from the previous story's branch. (DS-1, DS-2 and DS-3 each
+  branched that way; this line named DS-1's branch literally until DS-3.)
 
 ## Layout
 
@@ -102,5 +104,6 @@ in a repo or in this file.
 - `agents/deal-scout.md` — the research subagent (read-only Chrome tools only).
 - `skills/find-best-deal/SKILL.md` — the user-facing entry point.
 - `hooks/hooks.json` — `PreToolUse` + `PostToolUse` wiring for the guard.
-- `scripts/` — `policy.js`, `guard.js`, `score.js`, `history.js` (no runtime deps).
+- `scripts/` — `policy.js`, `guard.js`, `score.js`, `history.js`, `trust.js`, `report.js` (no
+  runtime deps).
 - `sites/*.json` — site adapters; `data/sale-calendar.json` — Indian sale windows.

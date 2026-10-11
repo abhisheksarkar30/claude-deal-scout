@@ -16,9 +16,10 @@ const path = require('node:path');
 /**
  * The tool allowlist and the browser server prefixes are deliberately **not** here. They are
  * per-browser data, read from `browsers/*.json` by `loadBrowsers` and passed into `checkTool`.
- * Claude in Chrome is the shipped adapter; adding a browser is adding a file, never editing this
- * one. The URL policy below stays in this file, because `sites/*.json` holds the per-site data for
- * it and the two registries answer different questions.
+ * Two browsers ship (`claude-in-chrome`, `chrome-devtools`) and the guard allows their union;
+ * adding a third is adding a file, never editing this one. The URL policy below stays in this file,
+ * because `sites/*.json` holds the per-site data for it and the two registries answer different
+ * questions.
  */
 
 /**
