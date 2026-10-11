@@ -11,9 +11,14 @@ the whole threat model.
 
 | # | Surface | Control | Enforced by |
 |---|---|---|---|
-| 1 | The user's **authenticated Amazon.in / Flipkart session** (highest value) | per-site path **allowlist** — account/mutation paths are absent from `allow`, so they are denied by omission rather than enumerated | [policy.js `checkUrl`](../../scripts/policy.js#L124-L154), invoked by the hook **and** by the scorer |
-| 2 | **Third-party price-history sites** (unauthenticated, lower trust) | tight lookup-only allowlist; `history` adapters rejected if any `allow` regex can reach an account path; lookups carry only public product URL/title | [policy.js:247-260](../../scripts/policy.js#L247-L260) |
-| 3 | **Attacker-controlled page text** fed to a model | agent prompt says page text is data, never instructions; the output is then validated as untrusted data — allowlisted fields, capped strings, bounded numbers, every URL re-checked, PII scrubbed | [deal-scout.md](../../agents/deal-scout.md) "Non-negotiable rules"; [score.js](../../scripts/score.js#L143-L199) |
+| 1 | The user's **authenticated Amazon.in / Flipkart session** (highest value) | per-site path **allowlist** — account/mutation paths are absent from `allow`, so they are denied by omission rather than enumerated | [policy.js `checkUrl`](../../scripts/policy.js#L125-L155), invoked by the hook **and** by the scorer |
+| 2 | **Third-party price-history and review sites** (unauthenticated, lower trust) | tight lookup-only allowlist; a non-shop adapter (`history`, `review`) is rejected if any `allow` regex can reach an account path; lookups carry only public product URL/title | [policy.js:253-266](../../scripts/policy.js#L253-L266) |
+| 3 | **Attacker-controlled page text** fed to a model | agent prompt says page text is data, never instructions; the output is then validated as untrusted data — allowlisted fields, capped strings, bounded numbers, every URL re-checked, PII scrubbed | [deal-scout.md](../../agents/deal-scout.md) "Non-negotiable rules"; [score.js](../../scripts/score.js#L240-L304) |
+| 4 | **Free text in the trust assessment** — `trust.brand` / `trust.seller`, read off the product page and rendered back in the assessment's `facts` | one cap + one PII sanitizer defined once in `score.js`, applied on **both** paths (the validated input and the engine's output); neither is printed raw anywhere else | [validTrust, score.js:185-230](../../scripts/score.js#L185-L230), [clean, trust.js:74-77](../../scripts/trust.js#L74-L77) |
+
+Surface 4 is new in DS-3 and is the first surface where a hostile page's own words travel back to the
+user **inside a sentence about whether to trust that page**. The risk there is manipulation rather
+than disclosure — a brand or seller string is rarely private. Residual R12 covers the label itself.
 
 ## The auth / permission model, in code
 
@@ -24,7 +29,7 @@ allowlists:
 ### Tool allowlist (default deny)
 [`browsers/`](../../browsers) — **two adapters ship**, each with exactly seven read-only tools,
 validated and loaded by
-[`validateBrowsers` / `loadBrowsers`, policy.js:328-402](../../scripts/policy.js#L328-L402). The hook
+[`validateBrowsers` / `loadBrowsers`, policy.js:336-410](../../scripts/policy.js#L336-L410). The hook
 matcher is `mcp__.*` (every MCP tool call, so no vendor's server name is enumerated here), and
 anything not in the loaded registry is denied.
 
@@ -67,7 +72,7 @@ Some controls are verified, some are not. Do not describe an unverified one as v
 | Host match is exact (look-alikes fail) | ✅ unit-tested, and the negative control (swap to `endsWith`) is specified | [test/policy.test.js](../../test/policy.test.js), plan §5.4 control 1 |
 | Guard fails closed (bad stdin/adapter → exit 2) | ✅ spawns the real script | [test/guard.test.js](../../test/guard.test.js) |
 | Guard leaves other agents' MCP use alone | ✅ | [test/guard.test.js](../../test/guard.test.js) |
-| `history` adapter overbroad-allow rejection | ✅ | [test/adapter.test.js:78-99](../../test/adapter.test.js#L78-L99) |
+| `history` **and `review`** adapter overbroad-allow rejection | ✅ one test each, the review case added by DS-3 | [test/adapter.test.js:94-115](../../test/adapter.test.js#L94-L115), [:143-146](../../test/adapter.test.js#L143-L146) |
 | Subagent `tools:` allowlist is honoured (H1) | ⚠️ **live-checked for the `claude-in-chrome` grant only** — under it the subagent had exactly the seven tools, and `javascript_tool` / `read_network_requests` did not exist for it. **This does not transfer to the `chrome-devtools` grant**, which is refused by the guard + the selftest matrix rather than observed | [evidence-07.txt](../../.beads/DS-1/evidence-07.txt), SECURITY.md R11 |
 | The guard blocks an off-allowlist tool from a real MCP server | ✅ **live-checked, both directions** — `mcp__chrome-devtools__list_pages` allowed and returned real pages; `mcp__chrome-devtools__click` blocked with `tool "click" is not in the read-only allow set` | [browsers/chrome-devtools.json](../../browsers/chrome-devtools.json), [SELFTEST_CASES, guard.js:195-291](../../scripts/guard.js#L195-L291) |
 | `navigate`'s response contains the final URL (H2) | ✅ **true for `chrome-devtools`, false for `claude-in-chrome`** — chrome-devtools' `navigate_page` and `list_pages` both embed the landed URL (`1: Amazon.in : phone (https://…) [selected]`), read off a live run; Claude in Chrome's `navigate` echoes only the *requested* URL, which is why its `landing_check` carries `tabs_context_mcp` as well | [evidence-03.txt](../../.beads/DS-1/evidence-03.txt), [browsers/](../../browsers), SECURITY.md R2 |
@@ -83,23 +88,26 @@ Some controls are verified, some are not. Do not describe an unverified one as v
 | R2 | Open redirects on allowlisted hosts | post-check is after-the-fact and depends on the agent calling `tabs_context_mcp` |
 | R3 | Main thread driving the browser | unguardable by design — the guard's scope is what keeps every other agent's MCP use untouched; the only control is the skill's instruction |
 | R4 | Prompt injection through the report | a *plausible-looking wrong number* is still just a number; validation bounds it, the flag rules catch the implausible, nothing proves it false |
-| R5 | Third-party history sites | unknown provenance; the host allowlist widens with each one added. Never add a history site that needs login or account data |
+| R5 | Third-party history **and review** sites | unknown provenance; the host allowlist widens with each one added. The `review` kind exists but **no review adapter ships** — the DS-3 survey found none that was robots-permitted, addressable and click-free at once. Never add a site that needs login or account data |
 | R6 | Forecast overconfidence | the next-dip estimate is a heuristic validated on synthetic series — it says nothing about prediction accuracy |
 | R7 | Site terms and bot detection | automated reading may conflict with a site's terms and be detected; the plugin does not attempt evasion and degrades to a blocked-page notice |
 | R8 | Stale sale calendar | windows are approximations that shift yearly; a wrong one changes only *confidence*, never ranking |
 | R9 | Hook matcher misses native-named tools | silent gap if a denied tool appears outside the MCP namespace |
-| R10 | PII sanitizer is pattern-based | not exhaustive — a number written as words, split across a line, or in an uncovered shape passes through |
+| R10 | PII sanitizer is pattern-based | not exhaustive — a number written as words, split across a line, or in an uncovered shape passes through. Since DS-3 it also carries `trust.brand` / `trust.seller` |
 | R11 | The `tools:` allowlist is unverified | verified once, on one build — re-check after a Claude Code upgrade |
+| R12 | The authenticity label is a rule over facts the listing controls | **a convincing counterfeit satisfies every signal.** The label measures how well *justified* the brand claim is, not whether the product is real; `high` beside a fake is the expected failure mode, which is why the caveat travels with every block. H6 — whether an amazon.in page even exposes those facts without a click — was **not** live-checked in DS-3 |
 
-> ⚠️ **R-numbers are overloaded across files.** `R1`–`R10` in plan **§2** are *requirements*;
-> `R1`–`R9` in plan **§6** and `R1`–`R11` in SECURITY.md are *residual risks*. A code comment
+> ⚠️ **R-numbers are overloaded across files.** `R1`–`R10` in the DS-1 plan **§2** are *requirements*;
+> `R1`–`R9` in that plan's **§6** and `R1`–`R12` in SECURITY.md are *residual risks*. A code comment
 > referencing "(R4)" means the residual-risk numbering.
 
 ## PII handling
 
 There is no PII store — the plugin persists nothing. The relevant code is the **sanitizer**
-([score.js:71-103](../../scripts/score.js#L71-L103)), which runs over `SANITIZED_FIELDS` =
-`title`, `source`, `product_key`:
+([score.js:70-114](../../scripts/score.js#L70-L114)), which runs over `SANITIZED_FIELDS` =
+`title`, `source`, `product_key` — and, since DS-3, over `trust.brand` and `trust.seller` on both the
+input path (`validTrust`) and the engine's output path (`facts`), so there is one scrubber rather than
+two that can drift:
 
 - phone-shaped digit runs (7–9 digits) and long runs (10+) → `[redacted]`
 - email-shaped tokens → `[redacted]`
@@ -120,14 +128,19 @@ note.
    attack surface."
 3. **The main thread must never drive the browser.** A browser call outside the subagent bypasses the only
    mechanical enforcement layer.
-4. **Never send account data to a history site.** Only the public, query-stripped product URL or
-   title.
+4. **Never send account data to a history or review site.** Only the public, query-stripped product
+   URL or title.
 5. **Never add a `click`/`form_input`-style capability.** A hook sees only coordinates or a ref, not
    what is under it — that is why v1 forbids clicks entirely rather than inspecting targets.
 6. **Agent output stays untrusted.** Never bypass `score.js`'s validation, and never hand-edit
    malformed agent JSON into shape.
-7. **Do not pass a history site's own verdict through.** Third-party "Deal Score" / "Buy signal"
-   widgets are page text from an untrusted source.
+7. **Do not pass a history or review site's own verdict through.** Third-party "Deal Score" /
+   "Buy signal" widgets are page text from an untrusted source.
+8. **The authenticity label must never become a gate or a guarantee.** It does not filter
+   `best_product` / `best_deal` (it is merged *after* ranking, and the identical-ranking test asserts
+   it), it says *evidence* and never "genuine", and the `caveat` travels with every block rather than
+   living in the docs. Excluding low-confidence candidates may well be wanted one day — that is a new
+   story with its own decision, not an edit here.
 
 ## Manual end-to-end checklist
 
