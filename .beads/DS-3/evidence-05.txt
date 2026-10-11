@@ -1,0 +1,132 @@
+================================================================================
+evidence-05.txt — br-DS-3-04 (H6/H7) and br-DS-3-05 (H8, appended below later)
+================================================================================
+
+STATUS: **H7 PARTIALLY CONFIRMED, H6 NOT RUN — 2026-10-11. HTTP-level reads only, because the
+built-in browser pane was unavailable to this session. Neither result is a rendered-page read, so
+the seller-name half of H7 stays UNVERIFIED, and H6 stays OPEN.**
+
+WHY THIS IS NOT A RENDERED-PAGE READ (the limitation, stated rather than papered over)
+
+The plan requires the live read in the built-in browser pane, public pages only, never the user's
+logged-in session (§7). This session could not do that:
+
+  - The Chrome DevTools MCP server cannot attach. Every call — `list_pages` as well as `new_page` —
+    returns: "The browser is already running for
+    C:\\Users\\abhis\\.cache\\chrome-devtools-mcp\\chrome-profile. Use --isolated to run multiple
+    browser instances."
+  - That profile is held by a browser already running. Killing it to free the profile was NOT done:
+    it is someone else's browser process, its tabs are unknown, and terminating it is a destructive
+    action this bead has no authority to take.
+
+So the DS-1 fallback applies (precedent: `.beads/DS-1/evidence-04.txt`, "Survey results, part 2"):
+HTTP-level checks, robots.txt included, with the limitation recorded. **These findings say nothing
+about what a rendered page exposes after JavaScript runs without a click** — which is exactly what
+H6/H7 ask. Re-run both in a real browser pane when it is free.
+
+NO USER-AGENT SPOOFING WAS USED. Every fetch below is a plain `curl` client identifying itself as
+such. Amazon's response to that is the finding (see H6).
+
+--------------------------------------------------------------------------------
+H6 — does an amazon.in /dp/<ASIN> page expose, as text and with no click: the brand
+     attribute, a brand-storefront link, a "Sold by" seller name, and an inline
+     top-review list carrying verified-purchase badges and star values?
+--------------------------------------------------------------------------------
+RESULT: **NOT RUN. Open.** Two independent reasons, both worth recording:
+
+1. robots.txt (fetched 2026-10-11, HTTP 200, 9320 bytes). For `User-agent: *` the product path is
+   NOT disallowed — only `/dp/product-availability/` and `/dp/rate-this-item/` are. BUT the file
+   then enumerates automated agents with a blanket `Disallow: /`, and **`ClaudeBot` is on that
+   list**, alongside GPTBot, CCBot, PerplexityBot, Google-Extended, GoogleAgent-Mariner,
+   GoogleAgent-Shopping, meta-externalagent, Bytespider, Scrapy, PetalBot, Devin, AI2Bot,
+   Gemini-Deep-Research, MistralAI-User, Diffbot, Copilot and others. Reading an amazon.in product
+   page as an automated Claude agent is therefore against the site's stated policy, and getting
+   past it would mean presenting a browser User-Agent while not being one. That is the workaround
+   the DS-1 survey explicitly refused ("respect bot signals"; a robots-disallowed source is a "no",
+   not a workaround), so it was not attempted.
+
+2. Independently, an honest-UA GET is blocked anyway. `GET https://www.amazon.in/dp/B0CX23V2ZK`
+   (plain curl UA) → **HTTP 503**, 3793 bytes, an anti-bot interstitial:
+     title: "Amazon.in"
+     text:  "Amazon.in Click the button below to continue shopping Continue shopping"
+   That is the interstitial class the agent's own rules already say to stop at and report as
+   `blocked`. There is no product data in the response — no title, price, rating, seller or brand.
+
+CONSEQUENCE, stated plainly: none of H6's four claims (brand attribute, brand-storefront link,
+"Sold by" seller, inline review list with verified-purchase badges and star values) is confirmed or
+refuted. The plan's §3.5 extraction assumes all four; that assumption is **untested**. It is not
+contradicted — a real browser session renders all of this normally, which is precisely how the
+plugin is designed to read amazon.in, and why the shipped adapter drives a session rather than
+crawling. But "the design assumes a browser session" is not the same as "verified", and this file
+will not pretend otherwise.
+
+--------------------------------------------------------------------------------
+H7 — does a flipkart /<slug>/p/<id> page expose the seller name and the brand
+     attribute WITHOUT a click?
+--------------------------------------------------------------------------------
+Judged on the RAW SERVER HTML — the same bytes a browser receives before it runs JavaScript, but
+NOT the rendered DOM. Read via `curl` (plain UA, HTTP 200, 1 243 333 bytes) of a real product URL
+taken from Flipkart's own product sitemap (`sitemap_pp_product_sitemap_v2_2.xml.gz`, listed in its
+robots.txt):
+
+  https://www.flipkart.com/wraparts-wrap-arts-pooja-treat-hamper-ideal-gift-festivals-housewarmings-etc-ceramic-brass-glass/p/itm000439652e07f
+
+The page is server-rendered, not a bare JS shell: it carries `window.__INITIAL_STATE__` (5
+occurrences) and 23 `<script>` tags, and its `<title>` is the real product name.
+
+  BRAND ATTRIBUTE      **YES, present in the raw HTML.**
+                       `…"ratingsCount":0,"reviewsCount":0},"bd":"wraparts","pas":{…`
+                       The `bd` key in the product's SSR state carries the brand, `wraparts`.
+                       So H7's brand half is CONFIRMED at the HTTP level.
+  RATING + COUNTS      **YES, present in the raw HTML.**
+                       `"pr":{"individualRatingsCount":[{"ratingValue":1,"ratingCount":0},…],
+                       "rating":0,"ratingsCount":0,"reviewsCount":0}`
+                       All zero here because this listing genuinely has no ratings — the point is
+                       that the fields are in the initial payload.
+  PRICE / MRP          present: `"ppd":{"fsp":2533,"finalPrice":2533,"mrp":5000,…}`.
+  SELLER NAME          **NOT in the raw HTML.** No `sellerName`, no `"seller"` key, no "Sold by".
+                       Every `seller` occurrence is chrome, not the seller's name:
+                         - `href="https://seller.flipkart.com/sell-online/…" title="Become a Seller"`
+                         - `href="/sellers?pid=PJTHERJGTJQRRBT8"` (a link, not a name)
+                         - the text "See other sellers"
+                       The presence of that `/sellers?pid=…` link means an offer/seller panel
+                       exists on the page — so the rendered DOM very likely DOES show the seller
+                       name. **UNVERIFIED either way.** It is not refuted; it is unread.
+  REVIEW BADGES        "Verified Purchase" and "verified" do not appear in the raw HTML.
+                       Consistent with §9 (Flipkart reviews are click-gated and out of scope) and
+                       with its robots.txt, which disallows `/reviews/`, `*/product-reviews/*`,
+                       `*/ratings-reviews-details-page`, `*/write-review/*` and `/search?`. Note
+                       that `*/sellers?*` and `*/seller-details?*` are disallowed too, so the
+                       seller *page* is off-limits — only a seller name printed on the product page
+                       would be fair game.
+
+H7 VERDICT: **brand half CONFIRMED (raw HTML); seller-name half UNVERIFIED** — it needs the
+rendered DOM, which this session could not produce. Per the bead, a `null`/absent result is an
+expected outcome, not a failure: Flipkart's client rendering is already recorded at
+`sites/flipkart.json:20`. The step-3 prompt rule stands as written — if the seller is not printed,
+omit `seller`; a missing `seller` costs one support on the ladder and `no_brand_store` /
+`review_sample_too_small` report the rest.
+
+--------------------------------------------------------------------------------
+What this bead shipped, and what it did not
+--------------------------------------------------------------------------------
+SHIPPED: the step-3 `trust` sub-field table (`brand`, `brand_store`, `seller`, `reviews_read`,
+`verified_read`, `offsite` — exactly bead 01's trusted sub-keys, no more), the two rules that matter
+most ("count what you read, not what is claimed" and "a gap is an omission, not a guess"), and the
+new step 5 off-site sibling that produces `offsite` in the identical shape to step 4's history
+lookup. Prompt only: no runtime code, and the `tools:` grant and frontmatter are untouched.
+
+NOT SHIPPED, deliberately: no adapter, no test. `test/browser.test.js` still passes (170 total, the
+grant unchanged, selftest 60 cases); the extraction itself is LLM behaviour and the plan keeps it
+out of the deterministic set (§5.3), so no test asserts the prompt text.
+
+OPEN FOR THE HUMAN — the one item this story could not close:
+  Re-run H6 and H7 in the built-in browser pane once it is free (close the browser holding
+  `~/.cache/chrome-devtools-mcp/chrome-profile`, or relaunch the MCP server with `--isolated`).
+  What to look for, unchanged from §3.5:
+    H6 / amazon.in /dp/<ASIN> — brand attribute, brand-storefront link, "Sold by", and an inline
+                                top-review list with verified-purchase badges, all with no click.
+    H7 / flipkart  /<slug>/p/<id> — whether the rendered DOM prints the seller name (the raw HTML
+                                already gives us the brand).
+  Until then, treat the four H6 claims as untested assumptions of the extraction prompt.
+================================================================================

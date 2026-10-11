@@ -9,7 +9,7 @@ line, stable at the `feat/ds-3-…` base. §11's context-refresh list is **not**
 - **Bead ID**: br-DS-3-04
 - **Priority**: P0 (critical — without the extraction the engine's input never exists, and the whole
   feature stays inert)
-- **Status**: pending
+- **Status**: done
 - **Original Estimate**: 1.5h (prompt edit + the H6/H7 live read)
 - **Dependencies**: br-DS-3-02
 - **Blocks**: br-DS-3-06
@@ -121,6 +121,65 @@ than deferred.
 
 ## Review Notes
 
-*(Append-only. The implementer records here, when the bead is done: what was built, any justified
-deviation from the bead or the plan, the H6/H7 live-read result, and anything deliberately left undone.
-Not written at beadify time.)*
+**Done — with the live read half-run, and that is the headline.** `.beads/DS-3/evidence-05.txt`
+records H6/H7 in full; read it before trusting the extraction prompt.
+
+**What shipped.** `agents/deal-scout.md`, prompt text only — no runtime code, `tools:` and the
+frontmatter untouched:
+
+- Step 3's field table gains a `trust` row, and a `trust` subsection describes the six sub-fields.
+  They are **exactly bead 01's trusted sub-keys** — `brand`, `brand_store`, `seller`, `reviews_read`,
+  `verified_read`, `offsite` — verified by reading the table back against `score.js`'s `TRUST_FIELDS`.
+  No seventh key, and `third_party_seller` is explicitly *not* duplicated into `trust`.
+- The two rules the bead calls out, in the agent's own voice: **"count what you read, not what is
+  claimed"** (`reviews_read` is the rendered sample, never `review_count`) and **"a gap is an
+  omission, not a guess"** (omit `reviews_read`/`verified_read`/`seller` rather than fill them in).
+- A new **step 5, off-site reviews**, as step 4's sibling in the identical shape — bare adapter id,
+  `covers` match, lexicographic adapter-id order, `urls.lookup` from the public URL or title, first
+  usable result wins, otherwise the key is omitted. Steps 5/6 renumbered to 6/7.
+
+**H6 — NOT RUN. Open.** The built-in browser pane was unavailable: the Chrome DevTools MCP server
+cannot attach at all (`list_pages` and `new_page` both return "The browser is already running for
+`~/.cache/chrome-devtools-mcp/chrome-profile`"), and I did not kill that browser process to free the
+profile — it is not mine, its tabs are unknown, and it is a destructive act this bead has no
+authority to take. So the DS-1 fallback applies. Two independent blockers, both recorded:
+
+1. amazon.in's `robots.txt` enumerates automated agents with `Disallow: /` — **including
+   `ClaudeBot`** — so reading a `/dp/` page as an automated Claude agent is against its stated
+   policy, and getting past it would mean wearing a browser User-Agent while not being one. That is
+   the workaround the DS-1 survey refused, so it was not attempted.
+2. An honest-UA GET is blocked regardless: `HTTP 503`, a 3793-byte "Click the button below to
+   continue shopping" interstitial. No product data at all.
+
+**So none of H6's four claims is confirmed or refuted — they remain untested assumptions of the
+extraction prompt.** Not contradicted (a real session renders all of it, which is how the plugin is
+designed to read amazon.in), but not verified either, and the evidence file says so.
+
+**H7 — brand half CONFIRMED, seller half UNVERIFIED.** Read from the raw server HTML of a real
+product URL taken from Flipkart's own sitemap (listed in its robots.txt; the product path is *not*
+disallowed there — `/reviews/`, `*/product-reviews/*`, `*/ratings-reviews-details-page`, `/search?`
+and `*/sellers?*` are). The brand is genuinely in the initial payload: `"bd":"wraparts"` in the
+`__INITIAL_STATE__` blob, alongside `"rating":0,"ratingsCount":0,"reviewsCount":0` and
+`"ppd":{"finalPrice":2533,"mrp":5000}`. The **seller name is not**: no `sellerName`, no `"seller"`
+key, no "Sold by" — every `seller` hit is nav chrome ("Become a Seller") or a `/sellers?pid=…` link.
+That link implies the rendered DOM does show a seller, so the half is unread rather than refuted.
+Needs the browser pane; §9 already puts Flipkart reviews out of scope.
+
+**A methodology catch worth recording, because it nearly produced false evidence.** The first pass
+counted markers with `grep -o … | wc -l` over a 1.2 MB single-line file and reported **0 for
+everything**, including `<html`, which was visibly present. Those counts were not "no match" — grep
+had **crashed** (it left a `grep.exe.stackdump` in the repo root; both it and my two throwaway scan
+scripts are removed from the tree). Re-counting with node showed the page is server-rendered after
+all, which inverted the finding. **Every number in evidence-05.txt comes from the node scan, not
+grep.** Had I recorded the grep result, this bead would have filed a confident, wrong H7.
+
+**Not done, deliberately.** No test — the extraction is LLM behaviour and §5.3 keeps it out of the
+deterministic set; a test asserting the file contains a string would be the fake this bead forbids.
+No adapter. §11's context-refresh list is not this bead's scope. The renumbered steps 5–7 shift the
+line numbers this repo's plan and beads cite for `agents/deal-scout.md`; those citations are
+historical and §11's refresh does not cover this file.
+
+**Open for the human** — the one item this story could not close: re-run H6 and H7 in a real browser
+pane (free the MCP profile, or relaunch the server with `--isolated`), then correct this bead's
+Review Notes and evidence-05.txt if either hypothesis comes back negative. The prompt is written to
+degrade correctly if the seller or the review sample simply is not there.
