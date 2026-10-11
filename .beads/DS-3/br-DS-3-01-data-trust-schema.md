@@ -10,7 +10,7 @@ context-refresh list is **not** this bead's scope.
 - **Bead ID**: br-DS-3-01
 - **Priority**: P0 (critical — it is the contract every other bead reads, and it is the
   report-injection control for the story's first new free-text field)
-- **Status**: pending
+- **Status**: done
 - **Original Estimate**: 1h
 - **Dependencies**: None
 - **Blocks**: br-DS-3-02, br-DS-3-05
@@ -132,6 +132,38 @@ same helper. Nothing else can land until the input half exists, which is why thi
 
 ## Review Notes
 
-*(Append-only. The implementer records here, when the bead is done: what was built, any justified
-deviation from the bead or the plan, the observed failing test name from control 12, and anything
-deliberately left undone. Not written at beadify time.)*
+**Done.** Built the input half of the `trust` contract exactly as specified, with no new export.
+
+- `scripts/score.js`: `MAX_REVIEWS_READ = 50` beside `MAX_NUMBER` (with the require-cycle rationale in
+  its doc comment); `trust: 'object'` in `CANDIDATE_FIELDS`; a `trust` branch in the `validateCandidate`
+  field loop; `validOffsite` and `validTrust` as module-internal helpers. `validTrust` returns
+  `{ trust, dropped }` — the bead's own §"any other key" note left the plumbing to the implementer, and
+  that shape is what lets the dropped **sub-key** names reach `dropped_fields` as required.
+  `TRUST_FIELDS` names the six permitted sub-keys.
+- `test/score.test.js`: the new `// trust input (§3.3)` section. `plugin.json` 0.1.6 → 0.1.7.
+- Verified: `npm test` **131 pass / 0 fail** (123 baseline + 8); `node scripts/guard.js selftest` still
+  prints **`selftest OK: 60 cases`**, unchanged from baseline — the evidence that widening the
+  validation layer left the enforcement layer untouched; `CANDIDATE_FIELDS.trust` prints `object`.
+
+**Justified deviation — 8 tests, not the 7 listed.** Added
+`'a trust value that is not an object drops the whole field'`. The bead's own §3.3 rule pins the `null`
+side of §3.1's null-vs-`"none"` split (`validTrust` returning `null` for a non-object), and `offsite`
+being all-or-nothing is the same idea one level down — but the test list left both unasserted. The new
+case asserts `!('trust' in result)`, `dropped_fields.includes('trust')`, and that the candidate survives
+with its price intact, i.e. the "not attempted" path is distinguishable from "attempted, nothing usable"
+(which bead 02 turns into `brand_confidence: "none"`). Without it, the split is a comment, not a contract.
+
+The bead's `offsite.source` case was listed as "capped/redacted"; both halves are now asserted in the
+one renamed test (`'trust.offsite.source is redacted when PII-shaped and capped when over-long'`), since
+the `slice` in `validOffsite` is real code and the bead asked for the cap specifically.
+
+**Negative control 12 — observed.** Neutralized the pair check in `validTrust`
+(`trust.verified_read > trust.reviews_read` → `false`), ran
+`node --test --test-name-pattern="drops the pair but keeps the candidate" test/score.test.js`:
+the failing test was **`a verified_read greater than reviews_read drops the pair but keeps the candidate`**,
+`fail 1`, at `test/score.test.js:369` (`assert.ok(!('reviews_read' in result.trust))`). Reverted from a
+pre-mutation copy; `sha1sum scripts/score.js` is **`163c91b5…`** both before the mutation and after the
+revert — byte-identical, with the full suite re-run green.
+
+**Not done, deliberately.** No automated test asserts the semantic ladder — that is bead 02's `trust.js`
+(the bead says so at §"Not covered"). §11's context-refresh list is not this bead's scope.
